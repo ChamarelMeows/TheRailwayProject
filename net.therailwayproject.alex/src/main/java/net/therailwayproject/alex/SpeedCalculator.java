@@ -21,6 +21,7 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.apache.commons.text.similarity.LevenshteinDistance;
+import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.LineString;
@@ -41,6 +42,7 @@ public class SpeedCalculator {
 	private int index = 0;
 	private Map<Long, WayNode> wayNodesMap;
 	public double[] progressBars = new double[]{0, 0, 0, 0, 0};
+	public List<GeoPosition> routeCords;
 	
 	public static SpeedCalculator INSTANCE() {
 		return sp;
@@ -50,12 +52,13 @@ public class SpeedCalculator {
 		sp = this;
 		tracks = new ArrayList<RailwayTrack>();
 		stations = new ArrayList<Station>();
+		routeCords = new ArrayList<GeoPosition>();
 		wayNodesMap = new HashMap<>();
 		op = new OverpassAPI();
 		ld = new LevenshteinDistance();
 		if (!new File("res/trackData.txt").exists() || !new File("res/stationData.txt").exists()) {
 			geometryFactory = new GeometryFactory();
-			String coordinates = "(51.82110816756636, 7.221113142976466,53.858961767879904, 12.106687745372998)";
+			String coordinates = "(48.0528529375358, 16.200436128996493,48.31988313206579, 17.250156539350034)";
 			op.getDataAndWrite("way[\"railway\"=\"rail\"]" + coordinates + ";\r\n" + "out meta geom;\r\n" + ">;\r\n"
 					+ "out skel qt;", "requestedTracks", true);
 			op.getDataAndWrite("(node[\"railway\"=\"station\"]" + coordinates + ";);\r\n" + "out meta geom;\r\n"
@@ -389,6 +392,7 @@ public class SpeedCalculator {
 	}
 
 	public void outputToMap(RailwayTrack start, RailwayTrack end) {
+		routeCords.clear();
 		Astar a = new Astar(this);
 		List<Integer> path = a.findPath(start, end);
 		StringBuilder contentBuilder = new StringBuilder();
@@ -418,6 +422,7 @@ public class SpeedCalculator {
 			totalTime += rt.getWeight();
 
 			for (WayNode wn : rt.getNodes()) {
+				routeCords.add(new GeoPosition(wn.getLatitude(), wn.getLongitude()));
 				String coordinate = "[" + wn.getLatitude() + ", " + wn.getLongitude() + "]";
 				if (!visitedCoordinates.contains(coordinate)) {
 					contentBuilder.append(coordinate).append(",\n");
@@ -552,7 +557,6 @@ public class SpeedCalculator {
 	}
 
 	public void segmentTracks() {
-		System.out.println("hi");
 		List<WayNode> junctionNodes = createJunctionNodes();
 		List<RailwayTrack> segmentedTracks = new ArrayList<>();
 
@@ -597,7 +601,6 @@ public class SpeedCalculator {
 	        }
 	        count++;
 	        progressBars[0] = (double)count / tracks.size();
-	        System.out.println(progressBars[0]);
 	    }
 
 	    return junctionNodes;
@@ -609,7 +612,6 @@ public class SpeedCalculator {
 	    }
 	    
 	    if(junctionNodes.contains(node)) {
-	    	System.out.println(parentTrack.getRailwayId());
 	    	return true;
 	    }
 	    

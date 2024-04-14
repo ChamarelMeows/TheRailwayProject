@@ -2,6 +2,8 @@ package net.therailwayproject.alex;
 
 import java.io.IOException;
 
+import javax.swing.SwingUtilities;
+
 public class Main {
 
 	public static void main(String[] args) throws IOException {
@@ -14,6 +16,7 @@ public class Main {
         });
         speedCalculatorThread.start();
 
-        MapViewer.launch(MapViewer.class, args);
+//        MapViewer.launch(MapViewer.class, args);
+        SwingUtilities.invokeLater(OSMMapViewer::new);
 	}
 }
