@@ -7,9 +7,11 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.text.DecimalFormat;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -20,7 +22,6 @@ import java.util.Set;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
-import org.apache.commons.text.similarity.LevenshteinDistance;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
@@ -32,16 +33,15 @@ import org.w3c.dom.NodeList;
 
 public class SpeedCalculator {
 
-	private List<RailwayTrack> tracks;
-	private List<Station> stations;
+	public List<RailwayTrack> tracks;
+	public List<Station> stations;
 	private GeometryFactory geometryFactory;
-	private LevenshteinDistance ld;
 	private OverpassAPI op;
 	private static SpeedCalculator sp;
-	public boolean doneLoading = false;
+	public boolean doneLoading = false, loadingFromFile = false;
 	private int index = 0;
 	private Map<Long, WayNode> wayNodesMap;
-	public double[] progressBars = new double[]{0, 0, 0, 0, 0};
+	public double[] progressBars = new double[]{0, 0, 0, 0};
 	public List<GeoPosition> routeCords;
 	
 	public static SpeedCalculator INSTANCE() {
@@ -55,16 +55,16 @@ public class SpeedCalculator {
 		routeCords = new ArrayList<GeoPosition>();
 		wayNodesMap = new HashMap<>();
 		op = new OverpassAPI();
-		ld = new LevenshteinDistance();
 		if (!new File("res/trackData.txt").exists() || !new File("res/stationData.txt").exists()) {
 			geometryFactory = new GeometryFactory();
-			String coordinates = "(48.0528529375358, 16.200436128996493,48.31988313206579, 17.250156539350034)";
+			String coordinates = "(52.2508991824472, 4.480493309760271,53.40553815248476, 5)";
 			op.getDataAndWrite("way[\"railway\"=\"rail\"]" + coordinates + ";\r\n" + "out meta geom;\r\n" + ">;\r\n"
 					+ "out skel qt;", "requestedTracks", true);
 			op.getDataAndWrite("(node[\"railway\"=\"station\"]" + coordinates + ";);\r\n" + "out meta geom;\r\n"
 					+ ">;\r\n" + "out skel qt;", "requestedStations", false);
 			loadDataFrom("res/requestedTracks.osm", "res/requestedStations.osm");
 		} else {
+			loadingFromFile = true;
 			loadTrackData();
 			loadStationData();
 			System.out.println("Loaded data");
@@ -166,7 +166,7 @@ public class SpeedCalculator {
 					}
 				}
 			}
-			progressBars[2] = (double)i / tracks.size();
+			progressBars[1] = (double)i / tracks.size()+1;
 		}
 	}
 
@@ -191,7 +191,7 @@ public class SpeedCalculator {
 			track.setLength(length);
 			track.setWeight(weight);
 			count++;
-			progressBars[3] = (double)count / tracks.size();
+			progressBars[2] = (double)count / tracks.size();
 		}
 	}
 
@@ -254,7 +254,7 @@ public class SpeedCalculator {
 				iterator.remove();
 			}
 			count++;
-			progressBars[4] = (double)count / stations.size();
+			progressBars[3] = (double)count / stations.size();
 		}
 	}
 
@@ -391,56 +391,68 @@ public class SpeedCalculator {
 		}
 	}
 
-	public void outputToMap(RailwayTrack start, RailwayTrack end) {
-		routeCords.clear();
-		Astar a = new Astar(this);
-		List<Integer> path = a.findPath(start, end);
-		StringBuilder contentBuilder = new StringBuilder();
-		Set<String> visitedCoordinates = new HashSet<>();
-		double totalLength = 0.0;
-		double totalTime = 0;
+	public void outputToMap(RailwayTrack start, RailwayTrack end, List<RailwayTrack> stops) {
+	    routeCords.clear();
+	    Astar a = new Astar(this);
+	    List<Integer> fullPath = new ArrayList<>();
+	    double totalLength = 0.0;
+	    double totalTime = 0;
+	    WayNode connection = null;
 
-		WayNode connection = null;
+	    if(stops != null) {
+	    	fullPath.addAll(a.findPath(start, stops.get(0)));
 
-		for (int i = 0; i < path.size(); i++) {
-			RailwayTrack rt = getTrackById(path.get(i));
+		    for (int i = 0; i < stops.size() - 1; i++) {
+		        fullPath.addAll(a.findPath(stops.get(i), stops.get(i + 1)));
+		    }
 
-			if (i == 0) {
-				connection = findConnectingNode(rt, getTrackById(path.get(1)));
-				if (connection.getNodeId() == rt.getNodes().get(0).getNodeId()) {
-					Collections.reverse(rt.getNodes());
-				}
-			} else {
-				if (connection.getNodeId() != rt.getNodes().get(0).getNodeId()) {
-					Collections.reverse(rt.getNodes());
-				}
-				if (rt.getId() != getTrackById(path.get(path.size() - 1)).getId())
-					connection = findConnectingNode(rt, getTrackById(path.get(i + 1)));
-			}
+		    fullPath.addAll(a.findPath(stops.get(stops.size() - 1), end));
+	    } else {
+	    	fullPath.addAll(a.findPath(start, end));
+	    }
+	    
+	    Set<String> visitedCoordinates = new HashSet<>();
+	    StringBuilder contentBuilder = new StringBuilder();
 
-			totalLength += rt.getLength();
-			totalTime += rt.getWeight();
+	    for (int i = 0; i < fullPath.size(); i++) {
+	        RailwayTrack rt = getTrackById(fullPath.get(i));
 
-			for (WayNode wn : rt.getNodes()) {
-				routeCords.add(new GeoPosition(wn.getLatitude(), wn.getLongitude()));
-				String coordinate = "[" + wn.getLatitude() + ", " + wn.getLongitude() + "]";
-				if (!visitedCoordinates.contains(coordinate)) {
-					contentBuilder.append(coordinate).append(",\n");
-					visitedCoordinates.add(coordinate);
-				}
-			}
-		}
+	        if (i == 0) {
+	            connection = findConnectingNode(rt, getTrackById(fullPath.get(1)));
+	            if (connection.getNodeId() == rt.getNodes().get(0).getNodeId()) {
+	                Collections.reverse(rt.getNodes());
+	            }
+	        } else {
+	            if (connection.getNodeId() != rt.getNodes().get(0).getNodeId()) {
+	                Collections.reverse(rt.getNodes());
+	            }
+	            if (rt.getId() != getTrackById(fullPath.get(fullPath.size() - 1)).getId())
+	                connection = findConnectingNode(rt, getTrackById(fullPath.get(i + 1)));
+	        }
 
-		double averageSpeed = Math.round((totalLength / totalTime));
-		long roundedTotalLength = Math.round(totalLength / 1000);
-		totalTime = Math.round((roundedTotalLength / averageSpeed) * 60);
+	        totalLength += rt.getLength();
+	        totalTime += rt.getWeight();
 
-		String content = contentBuilder.toString();
-		writeToFile("res/index.html", content);
+	        for (WayNode wn : rt.getNodes()) {
+	            routeCords.add(new GeoPosition(wn.getLatitude(), wn.getLongitude()));
+	            String coordinate = "[" + wn.getLatitude() + ", " + wn.getLongitude() + "]";
+	            if (!visitedCoordinates.contains(coordinate)) {
+	                contentBuilder.append(coordinate).append(",\n");
+	                visitedCoordinates.add(coordinate);
+	            }
+	        }
+	    }
 
-		System.out.println("Total length of the path: " + roundedTotalLength + " km");
-		System.out.println("Average Speed: " + averageSpeed + " km/h");
-		System.out.println("Total time: " + totalTime + " minutes");
+	    double averageSpeed = Math.round((totalLength / totalTime));
+	    long roundedTotalLength = Math.round(totalLength / 1000);
+	    totalTime = Math.round((roundedTotalLength / averageSpeed) * 60);
+
+	    String content = contentBuilder.toString();
+	    writeToFile("res/index.html", content);
+
+	    System.out.println("Total length of the path: " + roundedTotalLength + " km");
+	    System.out.println("Average Speed: " + averageSpeed + " km/h");
+	    System.out.println("Total time: " + totalTime + " minutes");
 	}
 
 	public void writeToFile(String filePath, String content) {
@@ -503,7 +515,7 @@ public class SpeedCalculator {
 					break;
 				}
 			}
-			if (result.isEmpty())
+			if (result.toString() == "")
 				return 100;
 			return (int) (Integer.parseInt(result.toString()) * 1.60934);
 		} else {
@@ -514,7 +526,7 @@ public class SpeedCalculator {
 					break;
 				}
 			}
-			if (result.isEmpty())
+			if (result.toString() == "")
 				return 100;
 			return Integer.parseInt(result.toString());
 		}
@@ -578,32 +590,27 @@ public class SpeedCalculator {
 	            segmentedTracks.add(createSegmentTrack(segmentNodes, track));
 	        }
 	        count++;
-	        progressBars[1] = (double)count / tracks.size();
+	        progressBars[0] = (double)count / tracks.size();
 	    }
 	    tracks = segmentedTracks;
 	}
 	
 	public List<WayNode> createJunctionNodes() {
-	    List<WayNode> junctionNodes = new ArrayList<>();
+		Map<WayNode, Integer> nodeOccurrences = new HashMap<>();
 
-	    int count = 0;
-	    for (RailwayTrack track : tracks) {
-	        for (RailwayTrack otherTrack : tracks) {
-	            if (track == otherTrack) {
-	                continue;
-	            }
+        for (RailwayTrack track : tracks) {
+            for (WayNode node : track.getNodes()) {
+                nodeOccurrences.put(node, nodeOccurrences.getOrDefault(node, 0) + 1);
+            }
+        }
 
-	            for (WayNode node : track.getNodes()) {
-	                if (otherTrack.getNodes().contains(node)) {
-	                    junctionNodes.add(node);
-	                }
-	            }
-	        }
-	        count++;
-	        progressBars[0] = (double)count / tracks.size();
-	    }
-
-	    return junctionNodes;
+        List<WayNode> junctionNodes = new ArrayList<>();
+        for (Map.Entry<WayNode, Integer> entry : nodeOccurrences.entrySet()) {
+            if (entry.getValue() > 1) {
+                junctionNodes.add(entry.getKey());
+            }
+        }
+	    return new ArrayList<>(junctionNodes);
 	}
 
 	public boolean shouldTrackBeSplit(WayNode node, RailwayTrack parentTrack, List<WayNode> junctionNodes) {
@@ -641,13 +648,13 @@ public class SpeedCalculator {
 		return node1.getNodeId() == node2.getNodeId() && node1.getLatitude() == node2.getLatitude()
 				&& node1.getLongitude() == node2.getLongitude();
 	}
-
+	
 	public Station getStationByName(String name) {
 		Station bestMatch = null;
 		int minDistance = Integer.MAX_VALUE;
 
 		for (Station s : stations) {
-			int distance = ld.apply(name.toLowerCase(), s.getName().toLowerCase());
+			int distance = levenshteinDistance(name.toLowerCase(), s.getName().toLowerCase());
 
 			if (distance < minDistance) {
 				minDistance = distance;
@@ -661,4 +668,75 @@ public class SpeedCalculator {
 
 		return null;
 	}
+	
+	public List<Station> getClosestStations(String name) {
+        List<Station> closestStations = new ArrayList<>();
+        List<Station> copy = stations;
+        copy.sort(Comparator.comparingInt(s -> levenshteinDistance(name.toLowerCase(), s.getName().toLowerCase())));
+
+        int count = 0;
+        for (Station s : copy) {
+            closestStations.add(s);
+            count++;
+            if (count >= 6) {
+                break;
+            }
+        }
+
+        return closestStations;
+    }
+	
+	public int levenshteinDistance(String s1, String s2) {
+		Normalizer.normalize(s1, Normalizer.Form.NFKC);
+		Normalizer.normalize(s2, Normalizer.Form.NFKC);
+        int m = s1.length();
+        int n = s2.length();
+        
+        int[][] dp = new int[m + 1][n + 1];
+        
+        for (int i = 0; i <= m; i++) {
+            dp[i][0] = i;
+        }
+        
+        for (int j = 0; j <= n; j++) {
+            dp[0][j] = j;
+        }
+        
+        for (int i = 1; i <= m; i++) {
+            for (int j = 1; j <= n; j++) {
+                if (s1.charAt(i - 1) == s2.charAt(j - 1)) {
+                    dp[i][j] = dp[i - 1][j - 1];
+                } else {
+                    dp[i][j] = 1 + Math.min(dp[i - 1][j - 1], Math.min(dp[i - 1][j], dp[i][j - 1]));
+                }
+            }
+        }
+        
+        return dp[m][n];
+    }
+	
+	public List<String> suggestSimilarWords(String inputWord, List<String> wordList) {
+        List<String> suggestedWords = new ArrayList<>();
+        
+        if(inputWord.length()>2) {
+        	Normalizer.normalize(inputWord, Normalizer.Form.NFKC);
+            for (String word : wordList) {
+            	Normalizer.normalize(word, Normalizer.Form.NFKC);
+                double similarity = similarityPercentage(inputWord, word.substring(0, word.indexOf(" ") != -1 ? word.indexOf(" ") : word.length()));
+                if(inputWord.length() <= word.length()) {
+                	if(similarity >= 70 || (word.toLowerCase().contains(inputWord.toLowerCase()) && similarity >= 5)) {
+                		suggestedWords.add(word);
+                	}
+                }
+            }
+            Collections.sort(suggestedWords);
+        }
+        return suggestedWords;
+    }
+	
+	public double similarityPercentage(String s1, String s2) {
+        int maxLength = Math.max(s1.length(), s2.length());
+        int distance = levenshteinDistance(s1, s2);
+        return (1 - (double) distance / maxLength) * 100;
+    }
 }
