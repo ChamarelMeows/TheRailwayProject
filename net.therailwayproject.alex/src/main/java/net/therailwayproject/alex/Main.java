@@ -16,7 +16,6 @@ public class Main {
         });
         speedCalculatorThread.start();
 
-//        MapViewer.launch(MapViewer.class, args);
         SwingUtilities.invokeLater(StartupWindow::new);
 	}
 }
