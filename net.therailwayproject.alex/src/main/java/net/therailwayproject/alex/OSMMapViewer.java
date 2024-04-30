@@ -10,8 +10,6 @@ import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
 import java.awt.event.MouseAdapter;
@@ -21,10 +19,12 @@ import java.awt.event.MouseWheelListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.geom.Point2D;
+import java.awt.geom.Rectangle2D;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -66,7 +66,8 @@ public class OSMMapViewer extends JFrame {
 	private JPanel controlPanel, stopsPanel;
 	private List<VisiblePainter> overlays;
 	private JScrollPane scrollPane;
-
+	private List<RailwayTrack> lengthSortedRt;
+	
 	public OSMMapViewer() {
 		sp = SpeedCalculator.INSTANCE();
         overlays = new ArrayList<>();
@@ -144,7 +145,7 @@ public class OSMMapViewer extends JFrame {
 		mapKit.setCenterPosition(new GeoPosition(51.5074, -0.1278));
 		mapKit.setZoom(5);
 		mapKit.getMainMap().setOverlayPainter(null);
-
+		
 		add(mapKit, BorderLayout.CENTER);
 
 		setSize(800, 600);
@@ -160,31 +161,39 @@ public class OSMMapViewer extends JFrame {
 	    }
 		
 		VisiblePainter routeOverlay = new LineOverlay(() -> new PaintingLogic() {
-			@Override
-			public void paint(Graphics2D g, JXMapViewer map, int w, int h) {
-				g = (Graphics2D) g.create();
-				g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-				Rectangle rect = mapKit.getMainMap().getViewportBounds();
-				g.translate(-rect.x, -rect.y);
+		    @Override
+		    public void paint(Graphics2D g, JXMapViewer map, int w, int h) {
+		        g = (Graphics2D) g.create();
+		        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		        Rectangle rect = mapKit.getMainMap().getViewportBounds();
+		        g.translate(-rect.x, -rect.y);
 
-				g.setColor(Color.RED);
-				g.setStroke(new BasicStroke(2));
+		        g.setColor(Color.RED);
+		        g.setStroke(new BasicStroke(2));
 
-				int lastX = -1;
-				int lastY = -1;
-				for (GeoPosition gp : sp.routeCords) {
-					Point2D pt = mapKit.getMainMap().getTileFactory().geoToPixel(gp,
-							mapKit.getMainMap().getZoom());
-					if (lastX != -1 && lastY != -1) {
-						g.drawLine(lastX, lastY, (int) pt.getX(), (int) pt.getY());
-					}
-					lastX = (int) pt.getX();
-					lastY = (int) pt.getY();
-				}
+		        int lastX = -1;
+		        int lastY = -1;
 
-				g.dispose();
-			}
-        });
+		        Rectangle visibleRect = map.getViewportBounds();
+		        double marginDegrees = 0.005;
+			    double marginPixels = marginDegrees * map.getTileFactory().getInfo().getLongitudeDegreeWidthInPixels(map.getZoom());
+
+			    visibleRect.setBounds((int) (visibleRect.x - marginPixels), (int) (visibleRect.y - marginPixels),
+			                          (int) (visibleRect.width + 2 * marginPixels), (int) (visibleRect.height + 2 * marginPixels));
+		        for (GeoPosition gp : sp.routeCords) {
+		            Point2D pt = mapKit.getMainMap().getTileFactory().geoToPixel(gp, mapKit.getMainMap().getZoom());
+		            if (visibleRect.contains(pt)) {
+		                if (lastX != -1 && lastY != -1) {
+		                    g.drawLine(lastX, lastY, (int) pt.getX(), (int) pt.getY());
+		                }
+		                lastX = (int) pt.getX();
+		                lastY = (int) pt.getY();
+		            }
+		        }
+
+		        g.dispose();
+		    }
+		});
 		VisiblePainter stationsOverlay = new LineOverlay(() -> new PaintingLogic() {
 			@Override
 			public void paint(Graphics2D g, JXMapViewer map, int w, int h) {
@@ -195,21 +204,27 @@ public class OSMMapViewer extends JFrame {
 
 			    g.setColor(Color.RED);
 
+			    Rectangle visibleRect = map.getViewportBounds();
+
 			    for (Station s : sp.stations) {
-			    	GeoPosition gp = new GeoPosition(s.getLat(), s.getLon());
+			        GeoPosition gp = new GeoPosition(s.getLat(), s.getLon());
 			        Point2D pt = mapKit.getMainMap().getTileFactory().geoToPixel(gp, mapKit.getMainMap().getZoom());
-			        int circleX = (int) pt.getX() - 5;
-			        int circleY = (int) pt.getY() - 5;
-			        int diameter = 10;
-			        g.drawOval(circleX, circleY, diameter, diameter);
+			        
+			        if (visibleRect.contains(pt)) {
+			            int circleX = (int) pt.getX() - 5;
+			            int circleY = (int) pt.getY() - 5;
+			            int diameter = 10;
+			            g.drawOval(circleX, circleY, diameter, diameter);
+			        }
 			    }
 
 			    g.dispose();
 			}
         });
+		initLengthSortedRt();
 		VisiblePainter tracksOverlay = new LineOverlay(() -> new PaintingLogic() {
 			public void paint(Graphics2D g, JXMapViewer map, int w, int h) {
-			    g = (Graphics2D) g.create();
+				g = (Graphics2D) g.create();
 			    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 			    Rectangle rect = mapKit.getMainMap().getViewportBounds();
 			    g.translate(-rect.x, -rect.y);
@@ -217,17 +232,37 @@ public class OSMMapViewer extends JFrame {
 			    g.setColor(Color.RED);
 			    g.setStroke(new BasicStroke(2));
 
-			    for (RailwayTrack rt : sp.tracks) {
-			    	GeoPosition startPoint = new GeoPosition(rt.getNodes().get(0).getLatitude(), rt.getNodes().get(0).getLongitude());
-			        Point2D startPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(startPoint, mapKit.getMainMap().getZoom());
-			        for (int i = 1; i < rt.getNodes().size(); i++) {
+			    Rectangle visibleRect = map.getViewportBounds();
+			    double marginDegrees = 0.005;
+			    int zoom = map.getZoom();
+			    double marginPixels = marginDegrees * map.getTileFactory().getInfo().getLongitudeDegreeWidthInPixels(zoom);
+
+			    visibleRect.setBounds((int) (visibleRect.x - marginPixels), (int) (visibleRect.y - marginPixels),
+			                          (int) (visibleRect.width + 2 * marginPixels), (int) (visibleRect.height + 2 * marginPixels));
+			    
+			    List<RailwayTrack> tracksToDraw = new ArrayList<>();
+			    tracksToDraw = lengthSortedRt.stream()
+			    	    .filter(rt -> rt.getNodes().stream()
+			    	        .skip(1)
+			    	        .anyMatch(node -> {
+			    	            GeoPosition nodePos = new GeoPosition(node.getLatitude(), node.getLongitude());
+			    	            Point2D nodePtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(nodePos, mapKit.getMainMap().getZoom());
+			    	            return visibleRect.contains(nodePtGeo);
+			    	        }))
+			    	    .limit(Math.min(150 * zoom, lengthSortedRt.size()))
+			    	    .collect(Collectors.toList());
+			    
+			    for (RailwayTrack rt : tracksToDraw) {
+			        GeoPosition startGeo = new GeoPosition(rt.getNodes().get(0).getLatitude(), rt.getNodes().get(0).getLongitude());
+			        Point2D startPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(startGeo, mapKit.getMainMap().getZoom());
+
+		        	for (int i = 1; i < rt.getNodes().size(); i++) {
 			        	GeoPosition endPoint = new GeoPosition(rt.getNodes().get(i).getLatitude(), rt.getNodes().get(i).getLongitude());
 			            Point2D endPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(endPoint, mapKit.getMainMap().getZoom());
 			            g.drawLine((int) startPtGeo.getX(), (int) startPtGeo.getY(), (int) endPtGeo.getX(), (int) endPtGeo.getY());
 			            startPtGeo = endPtGeo;
 			        }
 			    }
-
 			    g.dispose();
 			}
         });
@@ -235,6 +270,24 @@ public class OSMMapViewer extends JFrame {
 		overlays.addAll(Arrays.asList(compositePainter.painters));
 		
 		mapKit.getMainMap().setOverlayPainter(compositePainter);
+	}
+	
+	private void initLengthSortedRt() {
+		lengthSortedRt = new ArrayList<>(sp.tracks);
+		lengthSortedRt.sort(Comparator.comparingDouble(RailwayTrack::getLength).reversed());
+	}
+	
+	private void openHtml() {
+		File dir = new File("res/index.html");
+		if(dir.exists()) {
+			try {
+				Desktop.getDesktop().browse(dir.toURI());
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		} else {
+			JOptionPane.showMessageDialog(this, "No html created yet, please make a route!");
+		}
 	}
 	
 	private JTextField createStopField(String tooltip) {
@@ -254,14 +307,12 @@ public class OSMMapViewer extends JFrame {
 	    menuBar = new JMenuBar();
 	    fileMenu = new JMenu("File");
         JMenuItem fileItem1 = new JMenuItem("Exit");
-        fileItem1.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                System.exit(0);
-            }
-        });
+        JMenuItem fileItem2 = new JMenuItem("Open html");
+        fileItem1.addActionListener(e -> System.exit(0));
+        fileItem2.addActionListener(e -> openHtml());
         fileMenu.add(fileItem1);
-
+        fileMenu.add(fileItem2);
+        
         editMenu = new JMenu("Edit");
 
         settingsMenu = new JMenu("Settings");
@@ -319,24 +370,40 @@ public class OSMMapViewer extends JFrame {
 			String endLocation = stopFields.get(stopFields.size()-1).getText();
 			RailwayTrack startTrack = sp.getTrackById(sp.getStationByName(startLocation).getTracks().get(0));
 			RailwayTrack endTrack = sp.getTrackById(sp.getStationByName(endLocation).getTracks().get(0));
+			if(startTrack == endTrack) {
+				JOptionPane.showMessageDialog(this, "Please enter a different end location!");
+				return;
+			}
 			if (stopFields.size() > 0) {
 				List<String> stopLocations = stopFields.stream().map(JTextField::getText).collect(Collectors.toList());
 				List<RailwayTrack> stopTracks = stopLocations.stream()
 						.map(sl -> sp.getTrackById(sp.getStationByName(sl).getTracks().get(0)))
 						.collect(Collectors.toList());
+				if(stopTracks.stream().distinct().count() != stopTracks.size()) {
+					JOptionPane.showMessageDialog(this, "Please make sure to enter different stops!");
+					return;
+				}
 				sp.outputToMap(startTrack, endTrack, stopTracks);
 			} else {
 				sp.outputToMap(startTrack, endTrack, null);
 			}
-			try {
-				Desktop.getDesktop().browse(new File("res/index.html").toURI());
-				overlays.get(0).setVisible(true);
-				mapKit.getMainMap().repaint();
-			} catch (IOException e) {
-				e.printStackTrace();
+			overlays.get(0).setVisible(true);
+			mapKit.setCenterPosition(sp.routeCords.get(sp.routeCords.size()/2));
+			for (int zoom = 1; zoom >= 1; zoom++) {
+			    mapKit.setZoom(zoom);
+
+			    Rectangle2D visibleArea = mapKit.getMainMap().getViewportBounds();
+			    Point2D firstPoint = mapKit.getMainMap().getTileFactory().geoToPixel(sp.routeCords.get(0), zoom);
+			    Point2D lastPoint = mapKit.getMainMap().getTileFactory().geoToPixel(sp.routeCords.get(sp.routeCords.size()-1), zoom);
+
+			    if (visibleArea.contains(firstPoint) && visibleArea.contains(lastPoint)) {
+			        break;
+			    }
 			}
+
+			mapKit.getMainMap().repaint();
 		} else {
-			JOptionPane.showMessageDialog(this, "The SpeedCalculator isn't loaded yet or map is not initialized!");
+			JOptionPane.showMessageDialog(this, "The SpeedCalculator isn't loaded yet!");
 		}
 	}
 	

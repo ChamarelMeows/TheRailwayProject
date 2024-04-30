@@ -57,7 +57,7 @@ public class SpeedCalculator {
 		op = new OverpassAPI();
 		if (!new File("res/trackData.txt").exists() || !new File("res/stationData.txt").exists()) {
 			geometryFactory = new GeometryFactory();
-			String coordinates = "(52.36047817528553, 13.103776625213408,52.670036441476086, 13.67912433084741)";
+			String coordinates = "(52.00405169419172, 4.21514369248833,52.48906017795534, 7.4453551270490035)";
 			op.getDataAndWrite("way[\"railway\"=\"rail\"]" + coordinates + ";\r\n" + "out meta geom;\r\n" + ">;\r\n"
 					+ "out skel qt;", "requestedTracks", true);
 			op.getDataAndWrite("(node[\"railway\"=\"station\"]" + coordinates + ";);\r\n" + "out meta geom;\r\n"
