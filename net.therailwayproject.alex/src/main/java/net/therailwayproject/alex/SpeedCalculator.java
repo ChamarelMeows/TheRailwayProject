@@ -3,9 +3,12 @@ package net.therailwayproject.alex;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.text.DecimalFormat;
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -40,8 +43,9 @@ public class SpeedCalculator {
 	private static SpeedCalculator sp;
 	public boolean doneLoading = false, loadingFromFile = false;
 	private int index = 0;
-	private Map<Long, WayNode> wayNodesMap;
-	public double[] progressBars = new double[]{0, 0, 0, 0};
+	public Map<Long, WayNode> wayNodesMap;
+	public double progress;
+	public String progressMsg = "";
 	public List<GeoPosition> routeCords;
 	
 	public static SpeedCalculator INSTANCE() {
@@ -55,48 +59,65 @@ public class SpeedCalculator {
 		routeCords = new ArrayList<GeoPosition>();
 		wayNodesMap = new HashMap<>();
 		op = new OverpassAPI();
-		if (!new File("res/trackData.txt").exists() || !new File("res/stationData.txt").exists()) {
+		if (!new File("res/trackData.ser").exists() || !new File("res/stationData.ser").exists()) {
 			geometryFactory = new GeometryFactory();
 			String coordinates = "(52.00405169419172, 4.21514369248833,52.48906017795534, 7.4453551270490035)";
-			op.getDataAndWrite("way[\"railway\"=\"rail\"]" + coordinates + ";\r\n" + "out meta geom;\r\n" + ">;\r\n"
-					+ "out skel qt;", "requestedTracks", true);
-			op.getDataAndWrite("(node[\"railway\"=\"station\"]" + coordinates + ";);\r\n" + "out meta geom;\r\n"
-					+ ">;\r\n" + "out skel qt;", "requestedStations", false);
-			loadDataFrom("res/requestedTracks.osm", "res/requestedStations.osm");
+			progressMsg = "Downloading data";
+			downloadData(coordinates);
 		} else {
 			loadingFromFile = true;
+			progressMsg = "Loading data";
 			loadTrackData();
+			progress = 0.5;
 			loadStationData();
-			System.out.println("Loaded data");
+			progress = 1;
 		}
+		doneLoading = true;
+	}
+	
+	public void downloadData(String coordinates) {
+		progress = 0;
+		progressMsg = "Downloading data";
+		tracks = new ArrayList<RailwayTrack>();
+		stations = new ArrayList<Station>();
+		op.getDataAndWrite("way[\"railway\"=\"rail\"]" + coordinates + ";\r\n" + "out meta geom;\r\n" + ">;\r\n"
+				+ "out skel qt;", "requestedTracks", true);
+		op.getDataAndWrite("(node[\"railway\"=\"station\"]" + coordinates + ";);\r\n" + "out meta geom;\r\n"
+				+ ">;\r\n" + "out skel qt;", "requestedStations", false);
+		loadDataFrom("res/requestedTracks.osm", "res/requestedStations.osm");
 		doneLoading = true;
 	}
 
 	public void loadDataFrom(String locationTracks, String locationStations) {
 		long a = System.currentTimeMillis();
+		progressMsg = "Loading railway tracks";
 		loadRailwayTracks(locationTracks);
-		System.out.println("Loaded tracks in: " + (System.currentTimeMillis() - a) + "ms");
-		long b = System.currentTimeMillis();
+		progress = 0.125;
+		System.out.println(progress);
+		progressMsg = "Segmenting railway tracks";
 		segmentTracks();
-		System.out.println("Segmented tracks in: " + (System.currentTimeMillis() - b) + "ms");
-		long c = System.currentTimeMillis();
+		progress = 0.25;
+		progressMsg = "Making connections";
 		makeConnections();
-		System.out.println("Made connections in: " + (System.currentTimeMillis() - c) + "ms");
-		long d = System.currentTimeMillis();
+		progress = 0.375;
+		progressMsg = "Calculating track lengths";
 		calculateLengths();
-		System.out.println("Calculated track lengths in: " + (System.currentTimeMillis() - d) + "ms");
-		long e = System.currentTimeMillis();
+		progress = 0.5;
+		progressMsg = "Loading stations";
 		loadStations(locationStations);
+		progress = 0.625;
+		progressMsg = "Finding station tracks";
 		loadStationTracks(400);
-		long z = System.currentTimeMillis();
+		progress = 0.75;
+		progressMsg = "Writing track data";
 		writeTrackData();
+		progress = 0.875;
+		progressMsg = "Writing station data";
 		writeStationData();
-		System.out.println("Written data in: " + (System.currentTimeMillis() - z) + "ms");
+		progress = 1;
 		System.out.println("Total computing time: " + (System.currentTimeMillis() - a) + "ms");
-
-		for (Station s : stations) {
-			System.out.println(s.getName());
-		}
+		progressMsg = "";
+		progress = 0;
 	}
 
 	public void loadRailwayTracks(String location) {
@@ -133,7 +154,7 @@ public class SpeedCalculator {
 						if (!wayNodesMap.containsKey(wn.getNodeId())) {
 							wayNodesMap.put(wn.getNodeId(), wn);
 						}
-						rt.addNode(wayNodesMap.get(wn.getNodeId()));
+						rt.addNode((wn.getNodeId()));
 					}
 				}
 				if (rt != null) {
@@ -146,19 +167,24 @@ public class SpeedCalculator {
 	}
 
 	public void makeConnections() {
+		Set<RailwayTrack> checkedSet = new HashSet<>(); 
 		for (int i = 0; i < tracks.size(); i++) {
 			RailwayTrack track1 = tracks.get(i);
-			WayNode firstNode1 = track1.getNodes().get(0);
-			WayNode lastNode1 = track1.getNodes().get(track1.getNodes().size() - 1);
+			WayNode firstNode1 = longToWayNode(track1.getNodes().get(0));
+			WayNode lastNode1 = longToWayNode(track1.getNodes().get(track1.getNodes().size() - 1));
 
 			for (int j = i + 1; j < tracks.size(); j++) {
 				RailwayTrack track2 = tracks.get(j);
+				if(checkedSet.contains(track2))
+					continue;
+				WayNode node = longToWayNode(track2.getNodes().get(0));
+				if(Math.max(firstNode1.getLatitude(), node.getLatitude()) - Math.min(firstNode1.getLatitude(), node.getLatitude()) > 0.5 || Math.max(firstNode1.getLongitude(), node.getLongitude()) - Math.min(firstNode1.getLongitude(), node.getLongitude()) > 0.5)
+					continue;
 				if (track1 != track2) {
-					WayNode firstNode2 = track2.getNodes().get(0);
-					WayNode lastNode2 = track2.getNodes().get(track2.getNodes().size() - 1);
+					WayNode lastNode2 = longToWayNode(track2.getNodes().get(track2.getNodes().size() - 1));
 
-					if (areNodesConnected(firstNode1, firstNode2) || areNodesConnected(firstNode1, lastNode2)
-							|| areNodesConnected(lastNode1, firstNode2) || areNodesConnected(lastNode1, lastNode2)) {
+					if (areNodesConnected(firstNode1, node) || areNodesConnected(firstNode1, lastNode2)
+							|| areNodesConnected(lastNode1, node) || areNodesConnected(lastNode1, lastNode2)) {
 						if (!track1.getConnections().contains(track2.getId()))
 							track1.addConnection(track2.getId());
 						if (!track2.getConnections().contains(track1.getId()))
@@ -166,20 +192,19 @@ public class SpeedCalculator {
 					}
 				}
 			}
-			progressBars[1] = (double)i / tracks.size()+1;
+			checkedSet.add(track1);
 		}
 	}
 
 	public void calculateLengths() {
 		DecimalFormat df = new DecimalFormat("0.000");
 
-		int count = 0;
 		for (RailwayTrack track : tracks) {
 			double totalDistance = 0.0;
 
 			for (int i = 0; i < track.getNodes().size() - 1; i++) {
-				WayNode currentNode = track.getNodes().get(i);
-				WayNode nextNode = track.getNodes().get(i + 1);
+				WayNode currentNode = longToWayNode(track.getNodes().get(i));
+				WayNode nextNode = longToWayNode(track.getNodes().get(i + 1));
 				double distance = calculateDistance(currentNode.getLatitude(), currentNode.getLongitude(),
 						nextNode.getLatitude(), nextNode.getLongitude());
 				totalDistance += distance;
@@ -190,8 +215,6 @@ public class SpeedCalculator {
 
 			track.setLength(length);
 			track.setWeight(weight);
-			count++;
-			progressBars[2] = (double)count / tracks.size();
 		}
 	}
 
@@ -233,13 +256,13 @@ public class SpeedCalculator {
 
 	public void loadStationTracks(double distanceThreshold) {
 		Iterator<Station> iterator = stations.iterator();
-		int count = 0;
 		while (iterator.hasNext()) {
 			Station station = iterator.next();
 			boolean stationHasTracks = false;
 
 			for (RailwayTrack track : tracks) {
-				for (WayNode wn : track.getNodes()) {
+				for (Long l : track.getNodes()) {
+					WayNode wn = longToWayNode(l);
 					double distance = calculateDistance(station.getLat(), station.getLon(), wn.getLatitude(),
 							wn.getLongitude());
 					if (distance <= distanceThreshold) {
@@ -253,142 +276,69 @@ public class SpeedCalculator {
 			if (!stationHasTracks) {
 				iterator.remove();
 			}
-			count++;
-			progressBars[3] = (double)count / stations.size();
 		}
 	}
 
 	public void writeTrackData() {
-		try {
-			File folder = new File("res");
-			File trackData = new File(folder + File.separator + "trackData.txt");
-			if (!trackData.exists() || !folder.exists()) {
-				folder.mkdirs();
-				trackData.createNewFile();
-			}
-			FileWriter writer = new FileWriter(trackData);
-			for (RailwayTrack rt : tracks) {
-				writer.write(rt.getId() + "|" + rt.getWeight() + "|(");
-				for (int i = 0; i < rt.getConnections().size(); i++) {
-					if (i == rt.getConnections().size() - 1) {
-						writer.write(rt.getConnections().get(i) + ")|(");
-					} else {
-						writer.write(rt.getConnections().get(i) + ";");
-					}
-				}
-				if (rt.getConnections().size() == 0) {
-					writer.write(")|(");
-				}
-				for (int i = 0; i < rt.getNodes().size(); i++) {
-					if (i == rt.getNodes().size() - 1) {
-						writer.write(rt.getNodes().get(i).getNodeId() + "<" + rt.getNodes().get(i).getLatitude() + "<"
-								+ rt.getNodes().get(i).getLongitude() + ")|");
-					} else {
-						writer.write(rt.getNodes().get(i).getNodeId() + "<" + rt.getNodes().get(i).getLatitude() + "<"
-								+ rt.getNodes().get(i).getLongitude() + ";");
-					}
-				}
-				writer.write(rt.getRailwayId() + "|" + rt.getSpeed() + "|" + rt.getLength() + "\n");
-			}
-			writer.flush();
-			writer.close();
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
+	    try {
+	        String path = "res/trackData.ser";
+	        FileOutputStream fos = new FileOutputStream(path);
+	        ObjectOutputStream oos = new ObjectOutputStream(fos);
+	        
+	        oos.writeObject(tracks);
+	        
+	        oos.close();
+	        fos.close();
+	    } catch (IOException e) {
+	        e.printStackTrace();
+	    }
 	}
 
 	public void writeStationData() {
 		try {
-			File folder = new File("res");
-			File stationData = new File(folder + File.separator + "stationData.txt");
-			if (!stationData.exists() || !folder.exists()) {
-				folder.mkdirs();
-				stationData.createNewFile();
-			}
-			FileWriter writer = new FileWriter(stationData);
-			for (Station s : stations) {
-				writer.write(s.getName() + "|" + s.getLat() + "|" + s.getLon() + "|");
-				for (int id : s.getTracks()) {
-					if (id == s.getTracks().get(s.getTracks().size() - 1)) {
-						writer.write(id + "\n");
-					} else {
-						writer.write(id + "<");
-					}
-				}
-			}
-			writer.flush();
-			writer.close();
+			String path = "res/stationData.ser";
+			FileOutputStream fos = new FileOutputStream(path);
+	        ObjectOutputStream oos = new ObjectOutputStream(fos);
+	        
+	        oos.writeObject(stations);
+	        
+	        oos.close();
+	        fos.close();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
 
+	@SuppressWarnings("unchecked")
 	public void loadTrackData() {
-		BufferedReader reader;
-		try {
-			String path = "res/trackData.txt";
-			reader = new BufferedReader(new FileReader(path));
-			String line = reader.readLine();
+	    try {
+	        String path = "res/trackData.ser";
+	        FileInputStream fis = new FileInputStream(path);
+	        ObjectInputStream ois = new ObjectInputStream(fis);
 
-			while (line != null) {
-				String[] components = line.split("\\|");
-				String[] connections = components[2].replace("(", "").replace(")", "").split(";");
-				String[] wayNodes = components[3].replace("(", "").replace(")", "").split(";");
-				RailwayTrack rt = new RailwayTrack(Integer.parseInt(components[4]));
-				rt.setSpeed(Integer.parseInt(components[5]));
-				rt.setLength(Double.parseDouble(components[6]));
-				rt.setWeight(Double.parseDouble(components[1]));
-				rt.setId(Integer.parseInt(components[0]));
-				if (connections[0] != "") {
-					for (String s : connections) {
-						rt.addConnection(Integer.parseInt(s));
-					}
-				}
-				for (String s : wayNodes) {
-					String[] wayNodeComponents = s.split("<");
-					WayNode wn = new WayNode(Long.parseLong(wayNodeComponents[0]),
-							Double.parseDouble(wayNodeComponents[1]), Double.parseDouble(wayNodeComponents[2]));
-					if (!wayNodesMap.containsKey(wn.getNodeId())) {
-						wayNodesMap.put(wn.getNodeId(), wn);
-					}
-					rt.addNode(wayNodesMap.get(wn.getNodeId()));
-				}
-				tracks.add(rt);
-				line = reader.readLine();
-			}
+	        tracks = (List<RailwayTrack>) ois.readObject();
 
-			reader.close();
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+	        ois.close();
+	        fis.close();
+	    } catch (IOException | ClassNotFoundException e) {
+	        e.printStackTrace();
+	    }
 	}
 
+	@SuppressWarnings("unchecked")
 	public void loadStationData() {
-		BufferedReader reader;
-		try {
-			String path = "res/stationData.txt";
-			reader = new BufferedReader(new FileReader(path));
-			String line = reader.readLine();
-
-			while (line != null) {
-				String[] components = line.split("\\|");
-				String[] wayIds = components[3].split("<");
-				Station s = new Station(components[0], Double.parseDouble(components[1]),
-						Double.parseDouble(components[2]));
-				if (wayIds.length != 0) {
-					for (int i = 0; i < wayIds.length; i++) {
-						s.addTrack(Integer.parseInt(wayIds[i]));
-					}
-				}
-
-				stations.add(s);
-				line = reader.readLine();
-			}
-
-			reader.close();
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+	    try {
+	        String path = "res/stationData.ser";
+	        FileInputStream fis = new FileInputStream(path);
+	        ObjectInputStream ois = new ObjectInputStream(fis);
+	        
+	        stations = (ArrayList<Station>) ois.readObject();
+	        
+	        ois.close();
+	        fis.close();
+	    } catch (IOException | ClassNotFoundException e) {
+	        e.printStackTrace();
+	    }
 	}
 
 	public void outputToMap(RailwayTrack start, RailwayTrack end, List<RailwayTrack> stops) {
@@ -411,19 +361,18 @@ public class SpeedCalculator {
 	    	fullPath.addAll(a.findPath(start, end));
 	    }
 	    
-	    Set<String> visitedCoordinates = new HashSet<>();
 	    StringBuilder contentBuilder = new StringBuilder();
 
-	    for (int i = 0; i < fullPath.size(); i++) {
+	    for (int i = 0; i < fullPath.size()-1; i++) {
 	        RailwayTrack rt = getTrackById(fullPath.get(i));
 
 	        if (i == 0) {
 	            connection = findConnectingNode(rt, getTrackById(fullPath.get(1)));
-	            if (connection.getNodeId() == rt.getNodes().get(0).getNodeId()) {
+	            if (connection.getNodeId() == rt.getNodes().get(0)) {
 	                Collections.reverse(rt.getNodes());
 	            }
 	        } else {
-	            if (connection.getNodeId() != rt.getNodes().get(0).getNodeId()) {
+	            if (connection.getNodeId() != rt.getNodes().get(0)) {
 	                Collections.reverse(rt.getNodes());
 	            }
 	            if (rt.getId() != getTrackById(fullPath.get(fullPath.size() - 1)).getId())
@@ -433,13 +382,15 @@ public class SpeedCalculator {
 	        totalLength += rt.getLength();
 	        totalTime += rt.getWeight();
 
-	        for (WayNode wn : rt.getNodes()) {
-	            routeCords.add(new GeoPosition(wn.getLatitude(), wn.getLongitude()));
-	            String coordinate = "[" + wn.getLatitude() + ", " + wn.getLongitude() + "]";
-	            if (!visitedCoordinates.contains(coordinate)) {
-	                contentBuilder.append(coordinate).append(",\n");
-	                visitedCoordinates.add(coordinate);
-	            }
+	        WayNode lastNode = null;
+	        for (Long l : rt.getNodes()) {
+	        	WayNode wn = longToWayNode(l);
+	        	if(wn != lastNode) {
+	        		routeCords.add(new GeoPosition(wn.getLatitude(), wn.getLongitude()));
+		            String coordinate = "[" + wn.getLatitude() + ", " + wn.getLongitude() + "]";
+		            contentBuilder.append(coordinate).append(",\n");
+	        	}
+	            lastNode = wn;
 	        }
 	    }
 
@@ -569,43 +520,40 @@ public class SpeedCalculator {
 	}
 
 	public void segmentTracks() {
-		List<WayNode> junctionNodes = createJunctionNodes();
+		List<Long> junctionNodes = createJunctionNodes();
 		List<RailwayTrack> segmentedTracks = new ArrayList<>();
 
-		int count = 0;
 	    for (RailwayTrack track : tracks) {
-	        List<WayNode> segmentNodes = new ArrayList<>();
-	        for (WayNode node : track.getNodes()) {
-	            segmentNodes.add(node);
+	        List<Long> segmentNodes = new ArrayList<>();
+	        for (Long l : track.getNodes()) {
+	            segmentNodes.add(l);
 
-	            if (shouldTrackBeSplit(node, track, junctionNodes)) {
+	            if (shouldTrackBeSplit(l, track, junctionNodes)) {
 	                RailwayTrack segment = createSegmentTrack(segmentNodes, track);
 	                segmentedTracks.add(segment);
 
 	                segmentNodes = new ArrayList<>();
-	                segmentNodes.add(node);
+	                segmentNodes.add(l);
 	            }
 	        }
 	        if (!segmentNodes.isEmpty()) {
 	            segmentedTracks.add(createSegmentTrack(segmentNodes, track));
 	        }
-	        count++;
-	        progressBars[0] = (double)count / tracks.size();
 	    }
 	    tracks = segmentedTracks;
 	}
 	
-	public List<WayNode> createJunctionNodes() {
-		Map<WayNode, Integer> nodeOccurrences = new HashMap<>();
+	public List<Long> createJunctionNodes() {
+		Map<Long, Integer> nodeOccurrences = new HashMap<>();
 
         for (RailwayTrack track : tracks) {
-            for (WayNode node : track.getNodes()) {
-                nodeOccurrences.put(node, nodeOccurrences.getOrDefault(node, 0) + 1);
+            for (Long l : track.getNodes()) {
+                nodeOccurrences.put(l, nodeOccurrences.getOrDefault(l, 0) + 1);
             }
         }
 
-        List<WayNode> junctionNodes = new ArrayList<>();
-        for (Map.Entry<WayNode, Integer> entry : nodeOccurrences.entrySet()) {
+        List<Long> junctionNodes = new ArrayList<>();
+        for (Map.Entry<Long, Integer> entry : nodeOccurrences.entrySet()) {
             if (entry.getValue() > 1) {
                 junctionNodes.add(entry.getKey());
             }
@@ -613,19 +561,19 @@ public class SpeedCalculator {
 	    return new ArrayList<>(junctionNodes);
 	}
 
-	public boolean shouldTrackBeSplit(WayNode node, RailwayTrack parentTrack, List<WayNode> junctionNodes) {
-	    if (node.equals(parentTrack.getNodes().get(0)) || node.equals(parentTrack.getNodes().get(parentTrack.getNodes().size() - 1))) {
+	public boolean shouldTrackBeSplit(Long nodeId, RailwayTrack parentTrack, List<Long> junctionNodes) {
+	    if (nodeId.equals(parentTrack.getNodes().get(0)) || nodeId.equals(parentTrack.getNodes().get(parentTrack.getNodes().size() - 1))) {
 	        return false;
 	    }
 	    
-	    if(junctionNodes.contains(node)) {
+	    if(junctionNodes.contains(nodeId)) {
 	    	return true;
 	    }
 	    
 	    return false;
 	}
 
-	public RailwayTrack createSegmentTrack(List<WayNode> segmentNodes, RailwayTrack parentRailway) {
+	public RailwayTrack createSegmentTrack(List<Long> segmentNodes, RailwayTrack parentRailway) {
 	    RailwayTrack segment = new RailwayTrack(parentRailway.getRailwayId());
 	    segment.setId(index++);
 	    segment.setSpeed(parentRailway.getSpeed());
@@ -634,8 +582,10 @@ public class SpeedCalculator {
 	}
 
 	public WayNode findConnectingNode(RailwayTrack rt1, RailwayTrack rt2) {
-		for (WayNode wn1 : rt1.getNodes()) {
-			for (WayNode wn2 : rt2.getNodes()) {
+		for (Long l1 : rt1.getNodes()) {
+			WayNode wn1 = longToWayNode(l1);
+			for (Long l2 : rt2.getNodes()) {
+				WayNode wn2 = longToWayNode(l2);
 				if (wn1.getNodeId() == wn2.getNodeId()) {
 					return wn1;
 				}
@@ -739,4 +689,8 @@ public class SpeedCalculator {
         int distance = levenshteinDistance(s1, s2);
         return (1 - (double) distance / maxLength) * 100;
     }
+	
+	public WayNode longToWayNode(long id) {
+		return wayNodesMap.get(id);
+	}
 }

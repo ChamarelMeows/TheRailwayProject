@@ -70,10 +70,10 @@ public class Astar {
     }
 
     private double heuristic(RailwayTrack current, RailwayTrack goal) {
-    	List<Double> latCurrent = current.getNodes().stream().map(WayNode::getLatitude).collect(Collectors.toList());
-    	List<Double> lonCurrent = current.getNodes().stream().map(WayNode::getLongitude).collect(Collectors.toList());
-    	List<Double> latGoal = goal.getNodes().stream().map(WayNode::getLatitude).collect(Collectors.toList());
-    	List<Double> lonGoal = goal.getNodes().stream().map(WayNode::getLongitude).collect(Collectors.toList());
+    	List<Double> latCurrent = current.getNodes().stream().map(id -> sp.longToWayNode(id)).map(WayNode::getLatitude).collect(Collectors.toList());
+    	List<Double> lonCurrent = current.getNodes().stream().map(id -> sp.longToWayNode(id)).map(WayNode::getLongitude).collect(Collectors.toList());
+    	List<Double> latGoal = goal.getNodes().stream().map(id -> sp.longToWayNode(id)).map(WayNode::getLatitude).collect(Collectors.toList());
+    	List<Double> lonGoal = goal.getNodes().stream().map(id -> sp.longToWayNode(id)).map(WayNode::getLongitude).collect(Collectors.toList());
     	List<Double> avgCurrent = sp.avgLatLon(latCurrent, lonCurrent);
     	List<Double> avgGoal = sp.avgLatLon(latGoal, lonGoal);
         return Math.sqrt(Math.pow(avgCurrent.get(0) - avgGoal.get(0), 2) + Math.pow(avgCurrent.get(1) - avgGoal.get(1), 2));

@@ -7,9 +7,12 @@ import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Graphics2D;
+import java.awt.GridLayout;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
 import java.awt.event.MouseAdapter;
@@ -43,6 +46,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.JViewport;
 import javax.swing.JWindow;
+import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
@@ -51,10 +55,12 @@ import org.jdesktop.swingx.JXMapKit.DefaultProviders;
 import org.jdesktop.swingx.JXMapViewer;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.jdesktop.swingx.painter.Painter;
+import org.openstreetmap.osmosis.core.domain.v0_6.WayNode;
 
 public class OSMMapViewer extends JFrame {
 
 	private static final long serialVersionUID = 8618635083169161612L;
+	private static OSMMapViewer osmMapViewer;
 	private JButton searchButton;
 	private JButton addStopButton;
 	private JButton removeStopButton;
@@ -67,8 +73,14 @@ public class OSMMapViewer extends JFrame {
 	private List<VisiblePainter> overlays;
 	private JScrollPane scrollPane;
 	private List<RailwayTrack> lengthSortedRt;
+	private StartupWindow startupWindow;
+
+	public static OSMMapViewer INSTANCE() {
+		return osmMapViewer;
+	}
 	
 	public OSMMapViewer() {
+		osmMapViewer = this;
 		sp = SpeedCalculator.INSTANCE();
         overlays = new ArrayList<>();
         setTitle("Map Application");
@@ -221,7 +233,7 @@ public class OSMMapViewer extends JFrame {
 			    g.dispose();
 			}
         });
-		initLengthSortedRt();
+		sortRtByLength();
 		VisiblePainter tracksOverlay = new LineOverlay(() -> new PaintingLogic() {
 			public void paint(Graphics2D g, JXMapViewer map, int w, int h) {
 				g = (Graphics2D) g.create();
@@ -245,7 +257,8 @@ public class OSMMapViewer extends JFrame {
 			    	    .filter(rt -> rt.getNodes().stream()
 			    	        .skip(1)
 			    	        .anyMatch(node -> {
-			    	            GeoPosition nodePos = new GeoPosition(node.getLatitude(), node.getLongitude());
+			    	        	WayNode node1 = sp.longToWayNode(node);
+			    	            GeoPosition nodePos = new GeoPosition(node1.getLatitude(), node1.getLongitude());
 			    	            Point2D nodePtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(nodePos, mapKit.getMainMap().getZoom());
 			    	            return visibleRect.contains(nodePtGeo);
 			    	        }))
@@ -253,11 +266,13 @@ public class OSMMapViewer extends JFrame {
 			    	    .collect(Collectors.toList());
 			    
 			    for (RailwayTrack rt : tracksToDraw) {
-			        GeoPosition startGeo = new GeoPosition(rt.getNodes().get(0).getLatitude(), rt.getNodes().get(0).getLongitude());
+			    	WayNode node1 = sp.longToWayNode(rt.getNodes().get(0));
+			        GeoPosition startGeo = new GeoPosition(node1.getLatitude(), node1.getLongitude());
 			        Point2D startPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(startGeo, mapKit.getMainMap().getZoom());
 
 		        	for (int i = 1; i < rt.getNodes().size(); i++) {
-			        	GeoPosition endPoint = new GeoPosition(rt.getNodes().get(i).getLatitude(), rt.getNodes().get(i).getLongitude());
+		        		WayNode node2 = sp.longToWayNode(rt.getNodes().get(i));
+			        	GeoPosition endPoint = new GeoPosition(node2.getLatitude(), node2.getLongitude());
 			            Point2D endPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(endPoint, mapKit.getMainMap().getZoom());
 			            g.drawLine((int) startPtGeo.getX(), (int) startPtGeo.getY(), (int) endPtGeo.getX(), (int) endPtGeo.getY());
 			            startPtGeo = endPtGeo;
@@ -272,7 +287,7 @@ public class OSMMapViewer extends JFrame {
 		mapKit.getMainMap().setOverlayPainter(compositePainter);
 	}
 	
-	private void initLengthSortedRt() {
+	private void sortRtByLength() {
 		lengthSortedRt = new ArrayList<>(sp.tracks);
 		lengthSortedRt.sort(Comparator.comparingDouble(RailwayTrack::getLength).reversed());
 	}
@@ -288,6 +303,26 @@ public class OSMMapViewer extends JFrame {
 		} else {
 			JOptionPane.showMessageDialog(this, "No html created yet, please make a route!");
 		}
+	}
+	
+	private void loadData() {
+		sp.doneLoading = false;
+		sp.loadingFromFile = false;
+		startupWindow = new StartupWindow();
+		startupWindow.setVisible(false);
+		Thread inputThread = new Thread(new Runnable() {
+	        @Override
+	        public void run() {
+	            JFrame inputFrame = new JFrame("Coordinate Input");
+	            inputFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+	            CoordinateInputPanel cip = new CoordinateInputPanel();
+	            inputFrame.add(cip);
+	            inputFrame.pack();
+	            inputFrame.setLocationRelativeTo(null);
+	            inputFrame.setVisible(true);
+	        }
+	    });
+	    inputThread.start();
 	}
 	
 	private JTextField createStopField(String tooltip) {
@@ -308,10 +343,13 @@ public class OSMMapViewer extends JFrame {
 	    fileMenu = new JMenu("File");
         JMenuItem fileItem1 = new JMenuItem("Exit");
         JMenuItem fileItem2 = new JMenuItem("Open html");
+        JMenuItem fileItem3 = new JMenuItem("Download data");
         fileItem1.addActionListener(e -> System.exit(0));
         fileItem2.addActionListener(e -> openHtml());
-        fileMenu.add(fileItem1);
+        fileItem3.addActionListener(e -> loadData());
+        fileMenu.add(fileItem3);
         fileMenu.add(fileItem2);
+        fileMenu.add(fileItem1);
         
         editMenu = new JMenu("Edit");
 
@@ -508,5 +546,62 @@ public class OSMMapViewer extends JFrame {
 		public void focusLost(FocusEvent e) {
 			suggestionsWindow.setVisible(false);
 		}
+	}
+	
+	private class CoordinateInputPanel extends JPanel {
+		private static final long serialVersionUID = 9187332222036322673L;
+		private JTextField lat1Field, lat2Field, lon1Field, lon2Field;
+	    private JButton okButton;
+
+	    private double lat1, lat2, lon1, lon2;
+
+	    public CoordinateInputPanel() {
+	        setLayout(new GridLayout(5, 2));
+
+	        add(new JLabel("Latitude 1:"));
+	        lat1Field = new JTextField();
+	        add(lat1Field);
+
+	        add(new JLabel("Latitude 2:"));
+	        lat2Field = new JTextField();
+	        add(lat2Field);
+
+	        add(new JLabel("Longitude 1:"));
+	        lon1Field = new JTextField();
+	        add(lon1Field);
+
+	        add(new JLabel("Longitude 2:"));
+	        lon2Field = new JTextField();
+	        add(lon2Field);
+
+	        okButton = new JButton("OK");
+	        okButton.addActionListener(new ActionListener() {
+	            @Override
+	            public void actionPerformed(ActionEvent e) {
+	                try {
+	                    lat1 = Double.parseDouble(lat1Field.getText());
+	                    lat2 = Double.parseDouble(lat2Field.getText());
+	                    lon1 = Double.parseDouble(lon1Field.getText());
+	                    lon2 = Double.parseDouble(lon2Field.getText());
+	                    String coordinates = "(" + Math.min(lon1, lon2) + "," + Math.min(lat1, lat2) + "," + Math.max(lon1, lon2) + "," + Math.max(lat1, lat2) + ")";
+	                    SwingUtilities.getWindowAncestor(CoordinateInputPanel.this).dispose();
+	                    startupWindow.setVisible(true);
+	                    Thread dataThread = new Thread(new Runnable() {
+							@Override
+							public void run() {
+								sp.downloadData(coordinates);
+		                        sortRtByLength();
+		                        startupWindow.dispose();
+							}
+	                    });
+	                    dataThread.start();
+	                } catch (NumberFormatException ex) {
+	                    JOptionPane.showMessageDialog(CoordinateInputPanel.this, "Invalid input. Please enter numeric values.");
+	                }
+	            }
+	        });
+
+	        add(okButton);
+	    }
 	}
 }

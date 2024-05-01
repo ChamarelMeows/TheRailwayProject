@@ -1,9 +1,10 @@
 package net.therailwayproject.alex;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-public class Station {
+public class Station implements Serializable {
 
 	private String name;
 	private double lat, lon;

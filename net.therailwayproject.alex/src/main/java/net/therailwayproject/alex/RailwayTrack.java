@@ -1,13 +1,12 @@
 package net.therailwayproject.alex;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.openstreetmap.osmosis.core.domain.v0_6.WayNode;
+public class RailwayTrack implements Serializable {
 
-public class RailwayTrack {
-
-	List<WayNode> nodes;
+	List<Long> nodes;
 	List<Integer> connections;
 	int id;
 	int speed;
@@ -17,19 +16,19 @@ public class RailwayTrack {
 	
 	public RailwayTrack(int railwayId) {
 		this.railwayId = railwayId;
-		nodes = new ArrayList<WayNode>();
+		nodes = new ArrayList<Long>();
 		connections = new ArrayList<Integer>();
 	}
 	
-	public void addNode(WayNode node) {
+	public void addNode(Long node) {
 		nodes.add(node);
 	}
 	
 	public void addConnection(int id) {
 		connections.add(id);
 	}
-
-	public List<WayNode> getNodes() {
+	
+	public List<Long> getNodes() {
 		return nodes;
 	}
 	
