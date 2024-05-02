@@ -15,6 +15,8 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
+import java.awt.event.ItemEvent;
+import java.awt.event.ItemListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
@@ -29,12 +31,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JMenu;
@@ -407,7 +411,11 @@ public class OSMMapViewer extends JFrame {
 			String startLocation = stopFields.get(0).getText();
 			String endLocation = stopFields.get(stopFields.size()-1).getText();
 			RailwayTrack startTrack = sp.getTrackById(sp.getStationByName(startLocation).getTracks().get(0));
+			if(startTrack == null)
+				startTrack = sp.getTrackById(Integer.parseInt(startLocation));
 			RailwayTrack endTrack = sp.getTrackById(sp.getStationByName(endLocation).getTracks().get(0));
+			if(endTrack == null)
+				endTrack = sp.getTrackById(Integer.parseInt(endLocation));
 			if(startTrack == endTrack) {
 				JOptionPane.showMessageDialog(this, "Please enter a different end location!");
 				return;
@@ -550,13 +558,14 @@ public class OSMMapViewer extends JFrame {
 	
 	private class CoordinateInputPanel extends JPanel {
 		private static final long serialVersionUID = 9187332222036322673L;
-		private JTextField lat1Field, lat2Field, lon1Field, lon2Field;
+	    private JTextField lat1Field, lat2Field, lon1Field, lon2Field;
+	    private JComboBox<String> countryComboBox;
 	    private JButton okButton;
 
 	    private double lat1, lat2, lon1, lon2;
 
 	    public CoordinateInputPanel() {
-	        setLayout(new GridLayout(5, 2));
+	        setLayout(new GridLayout(6, 2));
 
 	        add(new JLabel("Latitude 1:"));
 	        lat1Field = new JTextField();
@@ -574,25 +583,41 @@ public class OSMMapViewer extends JFrame {
 	        lon2Field = new JTextField();
 	        add(lon2Field);
 
+	        add(new JLabel("Select Country:"));
+	        countryComboBox = new JComboBox<>(getCountryListWithRailways());
+	        countryComboBox.insertItemAt("", 0);
+	        countryComboBox.setSelectedIndex(0);
+	        add(countryComboBox);
+
 	        okButton = new JButton("OK");
 	        okButton.addActionListener(new ActionListener() {
 	            @Override
 	            public void actionPerformed(ActionEvent e) {
 	                try {
-	                    lat1 = Double.parseDouble(lat1Field.getText());
-	                    lat2 = Double.parseDouble(lat2Field.getText());
-	                    lon1 = Double.parseDouble(lon1Field.getText());
-	                    lon2 = Double.parseDouble(lon2Field.getText());
+	                	String country = String.valueOf(countryComboBox.getSelectedItem());
+	                	boolean isCountry = country != "";
+	                	if(!isCountry) {
+	                		lat1 = Double.parseDouble(lat1Field.getText());
+		                    lat2 = Double.parseDouble(lat2Field.getText());
+		                    lon1 = Double.parseDouble(lon1Field.getText());
+		                    lon2 = Double.parseDouble(lon2Field.getText());
+	                	}
 	                    String coordinates = "(" + Math.min(lon1, lon2) + "," + Math.min(lat1, lat2) + "," + Math.max(lon1, lon2) + "," + Math.max(lat1, lat2) + ")";
 	                    SwingUtilities.getWindowAncestor(CoordinateInputPanel.this).dispose();
 	                    startupWindow.setVisible(true);
 	                    Thread dataThread = new Thread(new Runnable() {
-							@Override
-							public void run() {
-								sp.downloadData(coordinates);
-		                        sortRtByLength();
-		                        startupWindow.dispose();
-							}
+	                        @Override
+	                        public void run() {
+	                        	if(isCountry) {
+	                        		sp.downloadData(country, true);
+	    	                	} else {
+	    	                		sp.downloadData(coordinates, false);
+	    	                	}
+	                        	if(sp.tracks.size() == 0)
+	                        	JOptionPane.showMessageDialog(CoordinateInputPanel.this, "No tracks found for this area.");
+	                            sortRtByLength();
+	                            startupWindow.dispose();
+	                        }
 	                    });
 	                    dataThread.start();
 	                } catch (NumberFormatException ex) {
@@ -602,6 +627,24 @@ public class OSMMapViewer extends JFrame {
 	        });
 
 	        add(okButton);
+	    }
+
+	    private String[] getCountryListWithRailways() {
+	        List<String> countries = new ArrayList<>();
+
+	        Locale[] locales = Locale.getAvailableLocales();
+
+	        for (Locale locale : locales) {
+	            String countryName = locale.getDisplayCountry();
+
+	            if (!countryName.isEmpty() && !countries.contains(countryName)) {
+	                countries.add(countryName);
+	            }
+	        }
+
+	        countries.sort(String::compareToIgnoreCase);
+
+	        return countries.toArray(new String[0]);
 	    }
 	}
 }
