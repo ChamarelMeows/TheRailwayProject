@@ -10,8 +10,6 @@ import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.openstreetmap.osmosis.core.domain.v0_6.WayNode;
-
 public class Astar {
 	
 	private SpeedCalculator sp;
@@ -42,7 +40,7 @@ public class Astar {
             closedSet.add(currentTrack);
 
             for (Integer neighborId : currentTrack.getConnections()) {
-                RailwayTrack neighbor = sp.getTrackById(neighborId);
+                RailwayTrack neighbor = sp.getTrackById(neighborId, false);
                 if (closedSet.contains(neighbor)) {
                     continue;
                 }

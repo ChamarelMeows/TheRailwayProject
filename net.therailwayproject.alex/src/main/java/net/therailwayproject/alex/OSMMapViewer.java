@@ -15,8 +15,6 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
-import java.awt.event.ItemEvent;
-import java.awt.event.ItemListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
@@ -59,7 +57,6 @@ import org.jdesktop.swingx.JXMapKit.DefaultProviders;
 import org.jdesktop.swingx.JXMapViewer;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.jdesktop.swingx.painter.Painter;
-import org.openstreetmap.osmosis.core.domain.v0_6.WayNode;
 
 public class OSMMapViewer extends JFrame {
 
@@ -191,7 +188,7 @@ public class OSMMapViewer extends JFrame {
 		        int lastY = -1;
 
 		        Rectangle visibleRect = map.getViewportBounds();
-		        double marginDegrees = 0.005;
+		        double marginDegrees = 0.01;
 			    double marginPixels = marginDegrees * map.getTileFactory().getInfo().getLongitudeDegreeWidthInPixels(map.getZoom());
 
 			    visibleRect.setBounds((int) (visibleRect.x - marginPixels), (int) (visibleRect.y - marginPixels),
@@ -249,7 +246,7 @@ public class OSMMapViewer extends JFrame {
 			    g.setStroke(new BasicStroke(2));
 
 			    Rectangle visibleRect = map.getViewportBounds();
-			    double marginDegrees = 0.005;
+			    double marginDegrees = 0.01;
 			    int zoom = map.getZoom();
 			    double marginPixels = marginDegrees * map.getTileFactory().getInfo().getLongitudeDegreeWidthInPixels(zoom);
 
@@ -410,21 +407,41 @@ public class OSMMapViewer extends JFrame {
 		if (sp.doneLoading) {
 			String startLocation = stopFields.get(0).getText();
 			String endLocation = stopFields.get(stopFields.size()-1).getText();
-			RailwayTrack startTrack = sp.getTrackById(sp.getStationByName(startLocation).getTracks().get(0));
-			if(startTrack == null)
-				startTrack = sp.getTrackById(Integer.parseInt(startLocation));
-			RailwayTrack endTrack = sp.getTrackById(sp.getStationByName(endLocation).getTracks().get(0));
-			if(endTrack == null)
-				endTrack = sp.getTrackById(Integer.parseInt(endLocation));
+			Station startStation = sp.getStationByName(startLocation);
+			RailwayTrack startTrack;
+			if(startStation != null) {
+				startTrack = sp.getTrackById(startStation.getTracks().get(0), false);
+			} else {
+				startTrack = sp.getTrackById(Integer.parseInt(startLocation), true);
+			}
+			Station endStation = sp.getStationByName(endLocation);
+			RailwayTrack endTrack;
+			if(endStation != null) {
+				endTrack = sp.getTrackById(endStation.getTracks().get(0), false);
+			} else {
+				endTrack = sp.getTrackById(Integer.parseInt(endLocation), true);
+			}
+			
 			if(startTrack == endTrack) {
 				JOptionPane.showMessageDialog(this, "Please enter a different end location!");
 				return;
 			}
 			if (stopFields.size() > 0) {
 				List<String> stopLocations = stopFields.stream().map(JTextField::getText).collect(Collectors.toList());
-				List<RailwayTrack> stopTracks = stopLocations.stream()
-						.map(sl -> sp.getTrackById(sp.getStationByName(sl).getTracks().get(0)))
-						.collect(Collectors.toList());
+				List<RailwayTrack> stopTracks = new ArrayList<>();
+				for (String s : stopLocations) {
+				    RailwayTrack stopTrack = null;
+				    Station station = sp.getStationByName(s);
+				    if (station != null) {
+				        List<Integer> stationTracks = station.getTracks();
+				        if (!stationTracks.isEmpty()) {
+				            stopTrack = sp.getTrackById(stationTracks.get(0), false);
+				        }
+				    } else {
+				        stopTrack = sp.getTrackById(Integer.parseInt(s), true);
+				    }
+				    stopTracks.add(stopTrack);
+				}
 				if(stopTracks.stream().distinct().count() != stopTracks.size()) {
 					JOptionPane.showMessageDialog(this, "Please make sure to enter different stops!");
 					return;

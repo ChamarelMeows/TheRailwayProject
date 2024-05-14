@@ -1,10 +1,8 @@
 package net.therailwayproject.alex;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -29,7 +27,6 @@ import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.LineString;
-import org.openstreetmap.osmosis.core.domain.v0_6.WayNode;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -68,7 +65,9 @@ public class SpeedCalculator {
 			loadingFromFile = true;
 			progressMsg = "Loading data";
 			loadTrackData();
-			progress = 0.5;
+			progress = 0.3;
+			loadNodeData();
+			progress = 0.6;
 			loadStationData();
 			progress = 1;
 		}
@@ -123,6 +122,7 @@ public class SpeedCalculator {
 		progress = 0.875;
 		progressMsg = "Writing station data";
 		writeStationData();
+		writeNodeData();
 		progress = 1;
 		System.out.println("Total computing time: " + (System.currentTimeMillis() - a) + "ms");
 		progressMsg = "";
@@ -320,6 +320,21 @@ public class SpeedCalculator {
 			e.printStackTrace();
 		}
 	}
+	
+	public void writeNodeData() {
+		try {
+			String path = "res/nodeData.ser";
+			FileOutputStream fos = new FileOutputStream(path);
+			ObjectOutputStream oos = new ObjectOutputStream(fos);
+
+			oos.writeObject(wayNodesMap);
+
+			oos.close();
+			fos.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
 
 	@SuppressWarnings("unchecked")
 	public void loadTrackData() {
@@ -328,8 +343,8 @@ public class SpeedCalculator {
 			FileInputStream fis = new FileInputStream(path);
 			ObjectInputStream ois = new ObjectInputStream(fis);
 
-			tracks = (List<RailwayTrack>) ois.readObject();
-
+			tracks = (ArrayList<RailwayTrack>) ois.readObject();
+			
 			ois.close();
 			fis.close();
 		} catch (IOException | ClassNotFoundException e) {
@@ -345,7 +360,23 @@ public class SpeedCalculator {
 			ObjectInputStream ois = new ObjectInputStream(fis);
 
 			stations = (ArrayList<Station>) ois.readObject();
+			
+			ois.close();
+			fis.close();
+		} catch (IOException | ClassNotFoundException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	@SuppressWarnings("unchecked")
+	public void loadNodeData() {
+		try {
+			String path = "res/nodeData.ser";
+			FileInputStream fis = new FileInputStream(path);
+			ObjectInputStream ois = new ObjectInputStream(fis);
 
+			wayNodesMap = (HashMap<Long, WayNode>) ois.readObject();
+			
 			ois.close();
 			fis.close();
 		} catch (IOException | ClassNotFoundException e) {
@@ -376,10 +407,10 @@ public class SpeedCalculator {
 		StringBuilder contentBuilder = new StringBuilder();
 
 		for (int i = 0; i < fullPath.size() - 1; i++) {
-			RailwayTrack rt = getTrackById(fullPath.get(i));
+			RailwayTrack rt = getTrackById(fullPath.get(i), false);
 
 			if (i == 0) {
-				connection = findConnectingNode(rt, getTrackById(fullPath.get(1)));
+				connection = findConnectingNode(rt, getTrackById(fullPath.get(1), false));
 				if (connection.getNodeId() == rt.getNodes().get(0)) {
 					Collections.reverse(rt.getNodes());
 				}
@@ -387,8 +418,8 @@ public class SpeedCalculator {
 				if (connection.getNodeId() != rt.getNodes().get(0)) {
 					Collections.reverse(rt.getNodes());
 				}
-				if (rt.getId() != getTrackById(fullPath.get(fullPath.size() - 1)).getId())
-					connection = findConnectingNode(rt, getTrackById(fullPath.get(i + 1)));
+				if (rt.getId() != getTrackById(fullPath.get(fullPath.size() - 1), false).getId())
+					connection = findConnectingNode(rt, getTrackById(fullPath.get(i + 1), false));
 			}
 
 			totalLength += rt.getLength();
@@ -504,12 +535,21 @@ public class SpeedCalculator {
 		return geometryFactory.createLineString(coordinates);
 	}
 
-	public RailwayTrack getTrackById(int wayId) {
-		for (RailwayTrack track : tracks) {
-			if (track.getId() == wayId) {
-				return track;
+	public RailwayTrack getTrackById(int wayId, boolean isTrackId) {
+		if(isTrackId) {
+			for (RailwayTrack track : tracks) {
+				if (track.getRailwayId() == wayId) {
+					return track;
+				}
+			}
+		} else {
+			for (RailwayTrack track : tracks) {
+				if (track.getId() == wayId) {
+					return track;
+				}
 			}
 		}
+		
 		return null;
 	}
 
