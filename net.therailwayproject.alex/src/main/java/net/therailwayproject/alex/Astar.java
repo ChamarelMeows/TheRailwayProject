@@ -32,6 +32,9 @@ public class Astar {
         while (!openSet.isEmpty()) {
             Node current = openSet.poll();
             RailwayTrack currentTrack = current.getTrack();
+            if(!sp.searchedTracks.contains(currentTrack)) {
+            	sp.searchedTracks.add(currentTrack);
+            }
 
             if (currentTrack.equals(goal)) {
                 return reconstructPath(cameFrom, currentTrack);

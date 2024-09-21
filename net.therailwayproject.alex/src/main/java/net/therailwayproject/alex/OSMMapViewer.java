@@ -21,6 +21,7 @@ import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.event.WindowListener;
 import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
 import java.io.File;
@@ -30,12 +31,16 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -75,7 +80,9 @@ public class OSMMapViewer extends JFrame {
 	private JScrollPane scrollPane;
 	private List<RailwayTrack> lengthSortedRt;
 	private StartupWindow startupWindow;
-
+	private boolean doneSearching = true;
+	public JMenuBar menuBar;
+	
 	public static OSMMapViewer INSTANCE() {
 		return osmMapViewer;
 	}
@@ -107,7 +114,7 @@ public class OSMMapViewer extends JFrame {
         stopsPanel.add(Box.createRigidArea(new Dimension(0, 10)));
 
         searchButton = new JButton("Go");
-        searchButton.addActionListener(e -> searchRoute());
+        searchButton.addActionListener(e -> {new Thread(() -> searchRoute()).start();});
         addStopButton = new JButton("Add Stop");
         addStopButton.addActionListener(e -> addStopField());
         removeStopButton = new JButton("Remove Stop");
@@ -282,7 +289,43 @@ public class OSMMapViewer extends JFrame {
 			    g.dispose();
 			}
         });
-		CompositePainter compositePainter = new CompositePainter(routeOverlay, stationsOverlay, tracksOverlay);
+		VisiblePainter loadingTracksOverlay = new LineOverlay(() -> new PaintingLogic() {
+			public void paint(Graphics2D g, JXMapViewer map, int w, int h) {
+				g = (Graphics2D) g.create();
+			    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			    Rectangle rect = mapKit.getMainMap().getViewportBounds();
+			    g.translate(-rect.x, -rect.y);
+
+			    g.setColor(Color.YELLOW);
+			    g.setStroke(new BasicStroke(2));
+
+			    Rectangle visibleRect = map.getViewportBounds();
+			    double marginDegrees = 0.01;
+			    int zoom = map.getZoom();
+			    double marginPixels = marginDegrees * map.getTileFactory().getInfo().getLongitudeDegreeWidthInPixels(zoom);
+
+			    visibleRect.setBounds((int) (visibleRect.x - marginPixels), (int) (visibleRect.y - marginPixels),
+			                          (int) (visibleRect.width + 2 * marginPixels), (int) (visibleRect.height + 2 * marginPixels));
+			    
+			    synchronized (sp.searchedTracks) {
+			    	for (RailwayTrack rt : sp.searchedTracks) {
+				    	WayNode node1 = sp.longToWayNode(rt.getNodes().get(0));
+				        GeoPosition startGeo = new GeoPosition(node1.getLatitude(), node1.getLongitude());
+				        Point2D startPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(startGeo, mapKit.getMainMap().getZoom());
+
+			        	for (int i = 1; i < rt.getNodes().size(); i++) {
+			        		WayNode node2 = sp.longToWayNode(rt.getNodes().get(i));
+				        	GeoPosition endPoint = new GeoPosition(node2.getLatitude(), node2.getLongitude());
+				            Point2D endPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(endPoint, mapKit.getMainMap().getZoom());
+				            g.drawLine((int) startPtGeo.getX(), (int) startPtGeo.getY(), (int) endPtGeo.getX(), (int) endPtGeo.getY());
+				            startPtGeo = endPtGeo;
+				        }
+				    }
+				    g.dispose();
+				}
+			}
+        });
+		CompositePainter compositePainter = new CompositePainter(routeOverlay, stationsOverlay, tracksOverlay, loadingTracksOverlay);
 		overlays.addAll(Arrays.asList(compositePainter.painters));
 		
 		mapKit.getMainMap().setOverlayPainter(compositePainter);
@@ -321,6 +364,43 @@ public class OSMMapViewer extends JFrame {
 	            inputFrame.pack();
 	            inputFrame.setLocationRelativeTo(null);
 	            inputFrame.setVisible(true);
+	            inputFrame.addWindowListener(new WindowListener() {
+
+					@Override
+					public void windowOpened(WindowEvent e) {
+						
+					}
+
+					@Override
+					public void windowClosing(WindowEvent e) {
+						menuBar.getMenu(0).getItem(0).setEnabled(true);
+					}
+
+					@Override
+					public void windowClosed(WindowEvent e) {
+						
+					}
+
+					@Override
+					public void windowIconified(WindowEvent e) {
+						
+					}
+
+					@Override
+					public void windowDeiconified(WindowEvent e) {
+						
+					}
+
+					@Override
+					public void windowActivated(WindowEvent e) {
+						
+					}
+
+					@Override
+					public void windowDeactivated(WindowEvent e) {
+						
+					}
+	            });
 	        }
 	    });
 	    inputThread.start();
@@ -335,7 +415,6 @@ public class OSMMapViewer extends JFrame {
     }
 	
 	private void createTopButtons() {
-		JMenuBar menuBar;
 	    JMenu fileMenu;
 	    JMenu editMenu;
 	    JMenu settingsMenu;
@@ -355,12 +434,15 @@ public class OSMMapViewer extends JFrame {
         editMenu = new JMenu("Edit");
 
         settingsMenu = new JMenu("Settings");
-        JMenuItem settingItem1 = new JMenuItem("Show stations");
-        JMenuItem settingItem2 = new JMenuItem("Show tracks");
+        JCheckBoxMenuItem settingItem1 = new JCheckBoxMenuItem("Show stations");
+        JCheckBoxMenuItem settingItem2 = new JCheckBoxMenuItem("Show tracks");
+        JCheckBoxMenuItem settingItem3 = new JCheckBoxMenuItem("Show searched tracks");
         settingItem1.addActionListener(e -> {overlays.get(1).toggleVisible(); mapKit.getMainMap().repaint();});
         settingItem2.addActionListener(e -> {overlays.get(2).toggleVisible(); mapKit.getMainMap().repaint();});
+        settingItem3.addActionListener(e -> {overlays.get(3).toggleVisible(); mapKit.getMainMap().repaint();});
         settingsMenu.add(settingItem1);
         settingsMenu.add(settingItem2);
+        settingsMenu.add(settingItem3);
 
         menuBar.add(fileMenu);
         menuBar.add(editMenu);
@@ -404,7 +486,8 @@ public class OSMMapViewer extends JFrame {
 	}
 
 	public void searchRoute() {
-		if (sp.doneLoading) {
+		if (sp.doneLoading && doneSearching) {
+			doneSearching = false;
 			String startLocation = stopFields.get(0).getText();
 			String endLocation = stopFields.get(stopFields.size()-1).getText();
 			Station startStation = sp.getStationByName(startLocation);
@@ -422,9 +505,21 @@ public class OSMMapViewer extends JFrame {
 				endTrack = sp.getTrackById(Integer.parseInt(endLocation), true);
 			}
 			
-			if(startTrack == endTrack) {
+			if(startTrack == endTrack && stopFields.size() == 0) {
 				JOptionPane.showMessageDialog(this, "Please enter a different end location!");
 				return;
+			}
+			if(overlays.get(3).isVisible()) {
+				ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+
+		        executor.scheduleAtFixedRate(() -> {
+		            if (doneSearching) {
+		                executor.shutdown();
+		                return;
+		            }
+		            mapKit.getMainMap().repaint();
+
+		        }, 0, 1, TimeUnit.SECONDS);
 			}
 			if (stopFields.size() > 0) {
 				List<String> stopLocations = stopFields.stream().map(JTextField::getText).collect(Collectors.toList());
@@ -441,10 +536,6 @@ public class OSMMapViewer extends JFrame {
 				        stopTrack = sp.getTrackById(Integer.parseInt(s), true);
 				    }
 				    stopTracks.add(stopTrack);
-				}
-				if(stopTracks.stream().distinct().count() != stopTracks.size()) {
-					JOptionPane.showMessageDialog(this, "Please make sure to enter different stops!");
-					return;
 				}
 				sp.outputToMap(startTrack, endTrack, stopTracks);
 			} else {
@@ -463,7 +554,8 @@ public class OSMMapViewer extends JFrame {
 			        break;
 			    }
 			}
-
+			sp.searchedTracks.clear();
+			doneSearching = true;
 			mapKit.getMainMap().repaint();
 		} else {
 			JOptionPane.showMessageDialog(this, "The SpeedCalculator isn't loaded yet!");
@@ -582,6 +674,7 @@ public class OSMMapViewer extends JFrame {
 	    private double lat1, lat2, lon1, lon2;
 
 	    public CoordinateInputPanel() {
+	    	menuBar.getMenu(0).getItem(0).setEnabled(false);
 	        setLayout(new GridLayout(6, 2));
 
 	        add(new JLabel("Latitude 1:"));
@@ -605,7 +698,7 @@ public class OSMMapViewer extends JFrame {
 	        countryComboBox.insertItemAt("", 0);
 	        countryComboBox.setSelectedIndex(0);
 	        add(countryComboBox);
-
+	        
 	        okButton = new JButton("OK");
 	        okButton.addActionListener(new ActionListener() {
 	            @Override
@@ -634,6 +727,7 @@ public class OSMMapViewer extends JFrame {
 	                        	JOptionPane.showMessageDialog(CoordinateInputPanel.this, "No tracks found for this area.");
 	                            sortRtByLength();
 	                            startupWindow.dispose();
+	                            menuBar.getMenu(0).getItem(0).setEnabled(true);
 	                        }
 	                    });
 	                    dataThread.start();

@@ -44,6 +44,7 @@ public class SpeedCalculator {
 	public double progress;
 	public String progressMsg = "";
 	public List<GeoPosition> routeCords;
+	public List<RailwayTrack> searchedTracks; //List of tracks that the A* algorithm has just searched
 
 	public static SpeedCalculator INSTANCE() {
 		return sp;
@@ -54,6 +55,7 @@ public class SpeedCalculator {
 		tracks = new ArrayList<RailwayTrack>();
 		stations = new ArrayList<Station>();
 		routeCords = new ArrayList<GeoPosition>();
+		searchedTracks = Collections.synchronizedList(new ArrayList<RailwayTrack>());
 		wayNodesMap = new HashMap<>();
 		op = new OverpassAPI();
 		if (!new File("res/trackData.ser").exists() || !new File("res/stationData.ser").exists()) {
@@ -87,10 +89,11 @@ public class SpeedCalculator {
 					+ "node[\"railway\"=\"station\"](area.boundaryarea);\r\n" + "out meta geom;\r\n" + ">;\r\n"
 					+ "out skel qt;", "requestedStations", false);
 		} else {
-			op.getDataAndWrite("way[\"railway\"=\"rail\"]" + area + ";\r\n" + "out meta geom;\r\n" + ">;\r\n"
-					+ "out skel qt;", "requestedTracks", true);
-			op.getDataAndWrite("(node[\"railway\"=\"station\"]" + area + ";);\r\n" + "out meta geom;\r\n"
-					+ ">;\r\n" + "out skel qt;", "requestedStations", false);
+			op.getDataAndWrite(
+					"way[\"railway\"=\"rail\"]" + area + ";\r\n" + "out meta geom;\r\n" + ">;\r\n" + "out skel qt;",
+					"requestedTracks", true);
+			op.getDataAndWrite("(node[\"railway\"=\"station\"]" + area + ";);\r\n" + "out meta geom;\r\n" + ">;\r\n"
+					+ "out skel qt;", "requestedStations", false);
 		}
 		loadDataFrom("res/requestedTracks.osm", "res/requestedStations.osm");
 		doneLoading = true;
@@ -129,6 +132,7 @@ public class SpeedCalculator {
 		progress = 0;
 	}
 
+
 	public void loadRailwayTracks(String location) {
 		try {
 			FileInputStream fileInputStream = new FileInputStream(location);
@@ -147,7 +151,11 @@ public class SpeedCalculator {
 				int maxSpeed = getMaxSpeed(wayElement);
 				String railwayId = wayElement.getAttribute("id");
 
-				RailwayTrack rt = new RailwayTrack(Integer.parseInt(railwayId));
+				
+				List<Integer> railwayIds = new ArrayList<>();
+                railwayIds.add(Integer.parseInt(railwayId));
+
+                RailwayTrack rt = new RailwayTrack(railwayIds);
 				rt.setSpeed(maxSpeed);
 
 				NodeList nodeList = wayElement.getElementsByTagName("nd");
@@ -320,7 +328,7 @@ public class SpeedCalculator {
 			e.printStackTrace();
 		}
 	}
-	
+
 	public void writeNodeData() {
 		try {
 			String path = "res/nodeData.ser";
@@ -344,7 +352,7 @@ public class SpeedCalculator {
 			ObjectInputStream ois = new ObjectInputStream(fis);
 
 			tracks = (ArrayList<RailwayTrack>) ois.readObject();
-			
+
 			ois.close();
 			fis.close();
 		} catch (IOException | ClassNotFoundException e) {
@@ -360,14 +368,14 @@ public class SpeedCalculator {
 			ObjectInputStream ois = new ObjectInputStream(fis);
 
 			stations = (ArrayList<Station>) ois.readObject();
-			
+
 			ois.close();
 			fis.close();
 		} catch (IOException | ClassNotFoundException e) {
 			e.printStackTrace();
 		}
 	}
-	
+
 	@SuppressWarnings("unchecked")
 	public void loadNodeData() {
 		try {
@@ -376,7 +384,7 @@ public class SpeedCalculator {
 			ObjectInputStream ois = new ObjectInputStream(fis);
 
 			wayNodesMap = (HashMap<Long, WayNode>) ois.readObject();
-			
+
 			ois.close();
 			fis.close();
 		} catch (IOException | ClassNotFoundException e) {
@@ -536,10 +544,12 @@ public class SpeedCalculator {
 	}
 
 	public RailwayTrack getTrackById(int wayId, boolean isTrackId) {
-		if(isTrackId) {
+		if (isTrackId) {
 			for (RailwayTrack track : tracks) {
-				if (track.getRailwayId() == wayId) {
-					return track;
+				for(Integer railwayId : track.getRailwayIds()) {
+					if (railwayId == wayId) {
+						return track;
+					}
 				}
 			}
 		} else {
@@ -549,7 +559,7 @@ public class SpeedCalculator {
 				}
 			}
 		}
-		
+
 		return null;
 	}
 
@@ -576,6 +586,7 @@ public class SpeedCalculator {
 		List<RailwayTrack> segmentedTracks = new ArrayList<>();
 
 		for (RailwayTrack track : tracks) {
+			System.out.println("segnemnting track: " + track.getRailwayIds().get(0));
 			List<Long> segmentNodes = new ArrayList<>();
 			for (Long l : track.getNodes()) {
 				segmentNodes.add(l);
@@ -610,7 +621,7 @@ public class SpeedCalculator {
 				junctionNodes.add(entry.getKey());
 			}
 		}
-		return new ArrayList<>(junctionNodes);
+		return junctionNodes;
 	}
 
 	public boolean shouldTrackBeSplit(Long nodeId, RailwayTrack parentTrack, List<Long> junctionNodes) {
@@ -627,7 +638,7 @@ public class SpeedCalculator {
 	}
 
 	public RailwayTrack createSegmentTrack(List<Long> segmentNodes, RailwayTrack parentRailway) {
-		RailwayTrack segment = new RailwayTrack(parentRailway.getRailwayId());
+		RailwayTrack segment = new RailwayTrack(parentRailway.getRailwayIds());
 		segment.setId(index++);
 		segment.setSpeed(parentRailway.getSpeed());
 		segment.getNodes().addAll(segmentNodes);
@@ -648,8 +659,7 @@ public class SpeedCalculator {
 	}
 
 	public boolean areNodesConnected(WayNode node1, WayNode node2) {
-		return node1.getNodeId() == node2.getNodeId() && node1.getLatitude() == node2.getLatitude()
-				&& node1.getLongitude() == node2.getLongitude();
+		return node1.getNodeId() == node2.getNodeId();
 	}
 
 	public Station getStationByName(String name) {
@@ -746,5 +756,26 @@ public class SpeedCalculator {
 
 	public WayNode longToWayNode(long id) {
 		return wayNodesMap.get(id);
+	}
+
+	public long getCommonNode(List<Long> l1, List<Long> l2) {
+		for (long wn : l1) {
+			if (l2.contains(wn)) {
+				return wn;
+			}
+		}
+		return 0;
+	}
+
+	public List<RailwayTrack> tracksAtNode(Long wn) {
+		List<RailwayTrack> tracksAtNode = new ArrayList<>();
+		for (RailwayTrack rt : tracks) {
+			for (long wnid : rt.getNodes()) {
+				if (wnid == wn) {
+					tracksAtNode.add(rt);
+				}
+			}
+		}
+		return tracksAtNode;
 	}
 }

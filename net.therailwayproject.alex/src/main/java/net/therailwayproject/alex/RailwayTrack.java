@@ -13,10 +13,10 @@ public class RailwayTrack implements Serializable {
 	int speed;
 	double length;
 	double weight;
-	int railwayId;
+	List<Integer> railwayIds;
 	
-	public RailwayTrack(int railwayId) {
-		this.railwayId = railwayId;
+	public RailwayTrack(List<Integer> railwayIds) {
+		this.railwayIds = railwayIds;
 		nodes = new ArrayList<Long>();
 		connections = new ArrayList<Integer>();
 	}
@@ -45,12 +45,12 @@ public class RailwayTrack implements Serializable {
 		this.id = id;
 	}
 	
-	public int getRailwayId() {
-		return railwayId;
+	public List<Integer> getRailwayIds() {
+		return railwayIds;
 	}
 	
-	public void setRailwayId(int railwayId) {
-		this.railwayId = railwayId;
+	public void setRailwayId(List<Integer> railwayIds) {
+		this.railwayIds = railwayIds;
 	}
 
 	public int getSpeed() {
