@@ -220,32 +220,56 @@ public class OSMMapViewer extends JFrame {
 		    }
 		});
 		VisiblePainter stationsOverlay = new LineOverlay(() -> new PaintingLogic() {
-			@Override
-			public void paint(Graphics2D g, JXMapViewer map, int w, int h) {
-			    g = (Graphics2D) g.create();
-			    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-			    Rectangle rect = mapKit.getMainMap().getViewportBounds();
-			    g.translate(-rect.x, -rect.y);
+		    @Override
+		    public void paint(Graphics2D g, JXMapViewer map, int w, int h) {
+		        g = (Graphics2D) g.create();
+		        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		        Rectangle rect = mapKit.getMainMap().getViewportBounds();
+		        g.translate(-rect.x, -rect.y);
 
-			    g.setColor(Color.RED);
+		        g.setColor(Color.RED);
 
-			    Rectangle visibleRect = map.getViewportBounds();
+		        Rectangle visibleRect = map.getViewportBounds();
 
-			    for (Station s : sp.stations) {
-			        GeoPosition gp = new GeoPosition(s.getLat(), s.getLon());
-			        Point2D pt = mapKit.getMainMap().getTileFactory().geoToPixel(gp, mapKit.getMainMap().getZoom());
-			        
-			        if (visibleRect.contains(pt)) {
-			            int circleX = (int) pt.getX() - 5;
-			            int circleY = (int) pt.getY() - 5;
-			            int diameter = 10;
-			            g.drawOval(circleX, circleY, diameter, diameter);
-			        }
-			    }
+		        List<Rectangle> drawnCircles = new ArrayList<>();
+		        int circleRadius = 5;
+		        int maxStationsToRender = 500;
+		        int renderedCount = 0;
 
-			    g.dispose();
-			}
-        });
+		        for (Station s : sp.stations) {
+		            if (renderedCount >= maxStationsToRender) {
+		                break;
+		            }
+
+		            GeoPosition gp = new GeoPosition(s.getLat(), s.getLon());
+		            Point2D pt = mapKit.getMainMap().getTileFactory().geoToPixel(gp, mapKit.getMainMap().getZoom());
+
+		            if (visibleRect.contains(pt)) {
+		                int circleX = (int) pt.getX() - circleRadius;
+		                int circleY = (int) pt.getY() - circleRadius;
+		                int diameter = circleRadius * 2;
+
+		                Rectangle circleBounds = new Rectangle(circleX, circleY, diameter, diameter);
+
+		                boolean overlaps = false;
+		                for (Rectangle drawn : drawnCircles) {
+		                    if (drawn.intersects(circleBounds)) {
+		                        overlaps = true;
+		                        break;
+		                    }
+		                }
+
+		                if (!overlaps) {
+		                    g.drawOval(circleX, circleY, diameter, diameter);
+		                    drawnCircles.add(circleBounds);
+		                    renderedCount++;
+		                }
+		            }
+		        }
+
+		        g.dispose();
+		    }
+		});
 		VisiblePainter tracksOverlay = new LineOverlay(() -> new PaintingLogic() {
 			public void paint(Graphics2D g, JXMapViewer map, int w, int h) {
 				g = (Graphics2D) g.create();
@@ -265,14 +289,16 @@ public class OSMMapViewer extends JFrame {
 			                          (int) (visibleRect.width + 2 * marginPixels), (int) (visibleRect.height + 2 * marginPixels));
 			    
 		    	for (List<GeoPosition> t : tracks) {
-			        Point2D startPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(t.get(0), mapKit.getMainMap().getZoom());
-			        if(visibleRect.contains(startPtGeo)) {
-			        	for (int i = 1; i < t.size(); i++) {
-				            Point2D endPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(t.get(i), mapKit.getMainMap().getZoom());
-				            g.drawLine((int) startPtGeo.getX(), (int) startPtGeo.getY(), (int) endPtGeo.getX(), (int) endPtGeo.getY());
-				            startPtGeo = endPtGeo;
+		    		if(t.size() > mapKit.getMainMap().getZoom()*3 || mapKit.getMainMap().getZoom() < 5) {
+		    			Point2D startPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(t.get(0), mapKit.getMainMap().getZoom());
+				        if(visibleRect.contains(startPtGeo)) {
+				        	for (int i = 1; i < t.size(); i++) {
+					            Point2D endPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(t.get(i), mapKit.getMainMap().getZoom());
+					            g.drawLine((int) startPtGeo.getX(), (int) startPtGeo.getY(), (int) endPtGeo.getX(), (int) endPtGeo.getY());
+					            startPtGeo = endPtGeo;
+					        }
 				        }
-			        }
+		    		}
 			    }
 			    g.dispose();
 			}
@@ -298,17 +324,21 @@ public class OSMMapViewer extends JFrame {
 			                          (int) (visibleRect.width + 2 * marginPixels), (int) (visibleRect.height + 2 * marginPixels));
 			    
 		    	for (RailwayTrack rt : sp.searchedTracks) {
-			    	WayNode node1 = sp.longToWayNode(rt.getNodes().get(0));
-			        GeoPosition startGeo = new GeoPosition(node1.getLatitude(), node1.getLongitude());
-			        Point2D startPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(startGeo, mapKit.getMainMap().getZoom());
+		    		if(rt.getLength() > mapKit.getMainMap().getZoom()*sp.routeCords.size() / 60 || mapKit.getMainMap().getZoom() < 7) {
+		    			WayNode node1 = sp.longToWayNode(rt.getNodes().get(0));
+				        GeoPosition startGeo = new GeoPosition(node1.getLatitude(), node1.getLongitude());
+				        Point2D startPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(startGeo, mapKit.getMainMap().getZoom());
 
-		        	for (int i = 1; i < rt.getNodes().size(); i++) {
-		        		WayNode node2 = sp.longToWayNode(rt.getNodes().get(i));
-			        	GeoPosition endPoint = new GeoPosition(node2.getLatitude(), node2.getLongitude());
-			            Point2D endPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(endPoint, mapKit.getMainMap().getZoom());
-			            g.drawLine((int) startPtGeo.getX(), (int) startPtGeo.getY(), (int) endPtGeo.getX(), (int) endPtGeo.getY());
-			            startPtGeo = endPtGeo;
-			        }
+				        if(visibleRect.contains(startPtGeo)) {
+				        	for (int i = 1; i < rt.getNodes().size(); i++) {
+				        		WayNode node2 = sp.longToWayNode(rt.getNodes().get(i));
+					        	GeoPosition endPoint = new GeoPosition(node2.getLatitude(), node2.getLongitude());
+					            Point2D endPtGeo = mapKit.getMainMap().getTileFactory().geoToPixel(endPoint, mapKit.getMainMap().getZoom());
+					            g.drawLine((int) startPtGeo.getX(), (int) startPtGeo.getY(), (int) endPtGeo.getX(), (int) endPtGeo.getY());
+					            startPtGeo = endPtGeo;
+					        }
+				        }
+		    		}
 			    }
 			    g.dispose();
 			}
@@ -352,7 +382,6 @@ public class OSMMapViewer extends JFrame {
 	
 	private void loadData() {
 		sp.doneLoading = false;
-		sp.loadingFromFile = false;
 		startupWindow = new StartupWindow();
 		startupWindow.setVisible(false);
 		Thread inputThread = new Thread(new Runnable() {
@@ -803,7 +832,7 @@ public class OSMMapViewer extends JFrame {
 		                    lon1 = Double.parseDouble(lon1Field.getText());
 		                    lon2 = Double.parseDouble(lon2Field.getText());
 	                	}
-	                    String coordinates = "(" + Math.min(lat1, lat2) + "," + Math.min(lon1, lon2) + "," + Math.max(lat1, lat2) + "," + Math.max(lon1, lon2) + ")";
+	                    String coordinates = "(" + Math.min(lon1, lon2) + "," + Math.min(lat1, lat2) + "," + Math.max(lon1, lon2) + "," + Math.max(lat1, lat2) + ")";
 	                    SwingUtilities.getWindowAncestor(CoordinateInputPanel.this).dispose();
 	                    startupWindow.setVisible(true);
 	                    Thread dataThread = new Thread(new Runnable() {
@@ -816,7 +845,7 @@ public class OSMMapViewer extends JFrame {
 	    	                	}
 	                        	createLocalTracks();
 	                        	if(sp.tracks.size() == 0)
-	                        	JOptionPane.showMessageDialog(CoordinateInputPanel.this, "No tracks found for this area.");
+	                        		JOptionPane.showMessageDialog(CoordinateInputPanel.this, "No tracks found for this area.");
 	                            startupWindow.dispose();
 	                            menuBar.getMenu(0).getItem(0).setEnabled(true);
 	                        }

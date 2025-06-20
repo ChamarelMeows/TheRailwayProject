@@ -1,12 +1,10 @@
 package net.therailwayproject.stella;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-public class Station implements Serializable {
+public class Station {
 
-	private static final long serialVersionUID = 1L;
 	private String name;
 	private double lat, lon;
 	private List<Integer> stationTracks;

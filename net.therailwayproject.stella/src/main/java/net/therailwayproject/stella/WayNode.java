@@ -1,10 +1,7 @@
 package net.therailwayproject.stella;
 
-import java.io.Serializable;
+public class WayNode {
 
-public class WayNode implements Serializable{
-
-	private static final long serialVersionUID = 1L;
 	private long id;
 	private double lat;
 	private double lon;
@@ -41,5 +38,10 @@ public class WayNode implements Serializable{
 
 	public void setLon(double lon) {
 		this.lon = lon;
+	}
+	
+	@Override
+	public String toString() {
+		return id + ", " + lat + ", " + lon;
 	}
 }

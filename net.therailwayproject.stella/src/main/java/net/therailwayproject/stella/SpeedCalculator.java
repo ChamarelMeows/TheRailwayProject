@@ -27,8 +27,15 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import javax.xml.namespace.QName;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.stream.XMLEventReader;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.events.Attribute;
+import javax.xml.stream.events.EndElement;
+import javax.xml.stream.events.StartElement;
+import javax.xml.stream.events.XMLEvent;
 
 import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.locationtech.jts.geom.Coordinate;
@@ -45,7 +52,7 @@ public class SpeedCalculator {
 	private GeometryFactory geometryFactory;
 	private OverpassAPI op;
 	private static SpeedCalculator sp;
-	public boolean doneLoading = false, loadingFromFile = false;
+	public boolean doneLoading = false;
 	private AtomicInteger index = new AtomicInteger(0);
 	public Map<Long, WayNode> wayNodesMap;
 	public double progress;
@@ -73,10 +80,8 @@ public class SpeedCalculator {
 		if (!new File("res/trackData.bin").exists() || !new File("res/stationData.bin").exists() || !new File("res/nodeData.bin").exists()) {
 			geometryFactory = new GeometryFactory();
 			String coordinates = "(52.00405169419172, 4.21514369248833,52.48906017795534, 7.4453551270490035)";
-			progressMsg = "Downloading data";
 			downloadData(coordinates, false);
 		} else {
-			loadingFromFile = true;
 			progressMsg = "Loading data";
 			loadTrackData();
 			loadNodeData();
@@ -91,30 +96,49 @@ public class SpeedCalculator {
 		tracks = new ArrayList<RailwayTrack>();
 		stations = new ArrayList<Station>();
 		if (isCountry) {
-			op.getDataAndWrite("[timeout:400];\r\n"
-					+ "area[\"name:en\"=\"" + area + "\"]->.boundaryarea;\r\n"
-					+ "way[\"railway\"=\"rail\"](area.boundaryarea);\r\n"
-					+ "out meta geom;\r\n"
-					+ ">;\r\n"
-					+ "out skel qt;", "requestedTracks", true);
-			op.getDataAndWrite("[timeout:400];\r\n"
-					+ "area[\"name:en\"=\"" + area + "\"]->.boundaryarea;\r\n"
-					+ "node[\"railway\"=\"station\"](area.boundaryarea);\r\n" + "out meta geom;\r\n" + ">;\r\n"
-					+ "out skel qt;", "requestedStations", false);
+			progressMsg = "Contacting overpass-api.de";
+			op.getDataAndWrite("[timeout:400];\n"
+					+ "area[\"name:en\"=\"" + area + "\"]->.boundaryarea;\n"
+					+ "(\n"
+					+ "way[\"railway\"=\"rail\"](area.boundaryarea);\n"
+					+ "way[\"railway\"=\"narrow_gauge\"](area.boundaryarea);\n"
+					+ ");\n"
+					+ "out meta geom;\n"
+					+ ">;\n"
+					+ "out skel qt;", "requestedTracks");
+			progressMsg = "Contacting overpass-api.de";
+			op.getDataAndWrite("[timeout:400];\n"
+		             + "area[\"name:en\"=\"" + area + "\"]->.boundaryarea;\n"
+		             + "(\n"
+		             + "  node[\"railway\"=\"station\"](area.boundaryarea);\n"
+		             + "  way[\"railway\"=\"station\"](area.boundaryarea);\n"
+		             + ");\n"
+		             + "out meta geom;\n"
+		             + ">;\n"
+		             + "out skel qt;", "requestedStations");
 		} else {
+			progressMsg = "Contacting overpass-api.de";
 			op.getDataAndWrite(
-					"[timeout:400];\r\n"
-					+ "way[\"railway\"=\"rail\"]" + area + ";\r\n"
-					+ "out meta geom;\r\n" +
-					">;\r\n" +
-					"out skel qt;",
-					"requestedTracks", true);
+				    "[timeout:400];\n"
+				  + "(\n"
+				  + "  way[\"railway\"=\"rail\"]" + area + ";\n"
+				  + "  way[\"railway\"=\"narrow_gauge\"]" + area + ";\n"
+				  + ");\n"
+				  + "out meta geom;\n"
+				  + ">;\n"
+				  + "out skel qt;",
+				  "requestedTracks");
+			progressMsg = "Contacting overpass-api.de";
 			op.getDataAndWrite(
-					"[timeout:400];\r\n"
-					+ "(node[\"railway\"=\"station\"]" + area + ";);\r\n"
-					+ "out meta geom;\r\n" + ">;\r\n"
-					+ "out skel qt;",
-					"requestedStations", false);
+				    "[timeout:400];\n"
+				  + "(\n"
+				  + "  node[\"railway\"=\"station\"]" + area + ";\n"
+				  + "  way[\"railway\"=\"station\"]" + area + ";\n"
+				  + ");\n"
+				  + "out meta geom;\n"
+				  + ">;\n"
+				  + "out skel qt;",
+				  "requestedStations");
 		}
 		loadDataFrom("res/requestedTracks.osm", "res/requestedStations.osm");
 		doneLoading = true;
@@ -122,28 +146,20 @@ public class SpeedCalculator {
 
 	public void loadDataFrom(String locationTracks, String locationStations) {
 		long a = System.currentTimeMillis();
-		progressMsg = "Loading railway tracks";
 		loadRailwayTracks(locationTracks);
 		progress = 0.125;
-		progressMsg = "Segmenting railway tracks";
 		segmentTracks();
 		progress = 0.25;
-		progressMsg = "Making connections";
 		makeConnections();
 		progress = 0.375;
-		progressMsg = "Calculating track lengths";
 		calculateLengths();
 		progress = 0.5;
-		progressMsg = "Loading stations";
 		loadStations(locationStations);
 		progress = 0.625;
-		progressMsg = "Finding station tracks";
 		loadStationTracks();
 		progress = 0.75;
-		progressMsg = "Writing track data";
 		writeTrackData();
 		progress = 0.875;
-		progressMsg = "Writing station data";
 		writeStationData();
 		writeNodeData();
 		progress = 1;
@@ -152,55 +168,78 @@ public class SpeedCalculator {
 		progress = 0;
 	}
 
+	private static final QName ID_QNAME = new QName("id");
+	private static final QName K_QNAME = new QName("k");
+	private static final QName V_QNAME = new QName("v");
+	private static final QName REF_QNAME = new QName("ref");
+	private static final QName LAT_QNAME = new QName("lat");
+	private static final QName LON_QNAME = new QName("lon");
 
 	public void loadRailwayTracks(String location) {
-		try {
-			FileInputStream fileInputStream = new FileInputStream(location);
+	    try (FileInputStream fileInputStream = new FileInputStream(location)) {
+	        XMLInputFactory factory = XMLInputFactory.newInstance();
+	        XMLEventReader eventReader = factory.createXMLEventReader(fileInputStream);
 
-			DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
-			DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
+	        RailwayTrack currentTrack = null;
 
-			Document doc = dBuilder.parse(fileInputStream);
-			doc.getDocumentElement().normalize();
+	        while (eventReader.hasNext()) {
+	            XMLEvent event = eventReader.nextEvent();
 
-			NodeList wayList = doc.getElementsByTagName("way");
+	            if (event.isStartElement()) {
+	                StartElement startElement = event.asStartElement();
+	                String elementName = startElement.getName().getLocalPart();
 
-			for (int i = 0; i < wayList.getLength(); i++) {
-				Element wayElement = (Element) wayList.item(i);
+	                if ("way".equals(elementName)) {
+	                    String railwayIdStr = getAttributeValue(startElement, ID_QNAME);
+	                    if (railwayIdStr != null) {
+	                        int railwayId = Integer.parseInt(railwayIdStr);
+	                        currentTrack = new RailwayTrack(List.of(railwayId));
+	                        currentTrack.setSpeed(100); // Default speed
+	                    }
+	                } else if ("tag".equals(elementName) && currentTrack != null) {
+	                    String key = getAttributeValue(startElement, K_QNAME);
+	                    String value = getAttributeValue(startElement, V_QNAME);
 
-				int maxSpeed = getMaxSpeed(wayElement);
-				String railwayId = wayElement.getAttribute("id");
+	                    if ("maxspeed".equals(key)) {
+	                        try {
+	                            currentTrack.setSpeed(getMaxSpeed(value));
+	                        } catch (NumberFormatException e) {
+	                            System.err.println("Invalid maxspeed value: " + value);
+	                        }
+	                    }
+	                } else if ("nd".equals(elementName) && currentTrack != null) {
+	                    String ref = getAttributeValue(startElement, REF_QNAME);
+	                    String lat = getAttributeValue(startElement, LAT_QNAME);
+	                    String lon = getAttributeValue(startElement, LON_QNAME);
 
-				
-				List<Integer> railwayIds = new ArrayList<>();
-                railwayIds.add(Integer.parseInt(railwayId));
+	                    if (ref != null && lat != null && lon != null) {
+	                        long nodeId = Long.parseLong(ref);
+	                        double latitude = Double.parseDouble(lat);
+	                        double longitude = Double.parseDouble(lon);
 
-                RailwayTrack rt = new RailwayTrack(railwayIds);
-				rt.setSpeed(maxSpeed);
+	                        WayNode wayNode = wayNodesMap.computeIfAbsent(nodeId, 
+	                                id -> new WayNode(nodeId, latitude, longitude));
+	                        currentTrack.addNode(wayNode.getNodeId());
+	                    }
+	                }
+	            } else if (event.isEndElement()) {
+	                EndElement endElement = event.asEndElement();
+	                if ("way".equals(endElement.getName().getLocalPart())) {
+	                    if (currentTrack != null) {
+	                        tracks.add(currentTrack);
+	                        currentTrack = null;
+	                    }
+	                }
+	            }
+	        }
+	    } catch (Exception e) {
+	        e.printStackTrace();
+	    }
+	}
 
-				NodeList nodeList = wayElement.getElementsByTagName("nd");
-
-				for (int j = 0; j < nodeList.getLength(); j++) {
-					Element nodeElement = (Element) nodeList.item(j);
-					String nodeId = nodeElement.getAttribute("ref");
-					String latitude = nodeElement.getAttribute("lat");
-					String longitude = nodeElement.getAttribute("lon");
-					if (nodeId != null && latitude != null && longitude != null) {
-						WayNode wn = new WayNode(Long.parseLong(nodeId), Double.parseDouble(latitude),
-								Double.parseDouble(longitude));
-						if (!wayNodesMap.containsKey(wn.getNodeId())) {
-							wayNodesMap.put(wn.getNodeId(), wn);
-						}
-						rt.addNode((wn.getNodeId()));
-					}
-				}
-				if (rt != null) {
-					tracks.add(rt);
-				}
-			}
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
+	private String getAttributeValue(StartElement startElement, QName qName) {
+	    Attribute attribute = startElement.getAttributeByName(qName);
+	    return attribute != null ? attribute.getValue() : null;
 	}
 
 	public void makeConnections() {
@@ -225,6 +264,7 @@ public class SpeedCalculator {
 	            for (int i = 0; i < tracksForNode.size(); i++) {
 	                for (int j = i + 1; j < tracksForNode.size(); j++) {
 	                    RailwayTrack track1 = tracksForNode.get(i);
+	                    progressMsg = "Making connections for track: " + track1.getRailwayIds().get(0);
 	                    RailwayTrack track2 = tracksForNode.get(j);
 
 	                    synchronized (track1) {
@@ -273,6 +313,7 @@ public class SpeedCalculator {
 		for (RailwayTrack track : tracks) {
 			double totalDistance = 0.0;
 
+			progressMsg = "Calculating distance for track: " + track.getRailwayIds().get(0);
 			for (int i = 0; i < track.getNodes().size() - 1; i++) {
 				WayNode currentNode = longToWayNode(track.getNodes().get(i));
 				WayNode nextNode = longToWayNode(track.getNodes().get(i + 1));
@@ -317,9 +358,56 @@ public class SpeedCalculator {
 					}
 				}
 				if (name != "") {
+					progressMsg = "Loading station: " + name;
 					stations.add(new Station(name, lat, lon));
 				}
 			}
+			
+			nodeList = doc.getElementsByTagName("way");
+
+			for (int i = 0; i < nodeList.getLength(); i++) {
+				Element wayElement = (Element) nodeList.item(i);
+
+				String name = "";
+				double totalLat = 0;
+				double totalLon = 0;
+				int count = 0;
+
+				NodeList tagList = wayElement.getElementsByTagName("tag");
+				for (int j = 0; j < tagList.getLength(); j++) {
+					Element tagElement = (Element) tagList.item(j);
+					if (tagElement.getAttribute("k").equals("name")) {
+						name = tagElement.getAttribute("v");
+						break;
+					}
+				}
+
+				if (!name.isEmpty()) {
+					NodeList ndList = wayElement.getElementsByTagName("nd");
+					for (int j = 0; j < ndList.getLength(); j++) {
+						Element ndElement = (Element) ndList.item(j);
+
+						String latStr = ndElement.getAttribute("lat");
+						String lonStr = ndElement.getAttribute("lon");
+
+						if (!latStr.isEmpty() && !lonStr.isEmpty()) {
+							double lat = Double.parseDouble(latStr);
+							double lon = Double.parseDouble(lonStr);
+							totalLat += lat;
+							totalLon += lon;
+							count++;
+						}
+					}
+
+					if (count > 0) {
+						double avgLat = totalLat / count;
+						double avgLon = totalLon / count;
+						progressMsg = "Loading station: " + name;
+						stations.add(new Station(name, avgLat, avgLon));
+					}
+				}
+			}
+			
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -329,18 +417,23 @@ public class SpeedCalculator {
 	    int numberOfThreads = Math.max(1, Math.min(Runtime.getRuntime().availableProcessors() * 2, stations.size()));
 	    ExecutorService executorService = Executors.newFixedThreadPool(numberOfThreads);
 
-	    List<Future<?>> futures = new ArrayList<>();
-
+	    final int BUCKET_SIZE = 10;
+	    Map<String, List<RailwayTrack>> trackBuckets = new HashMap<>();
 	    Map<Long, WayNode> trackCenterCoordinates = new HashMap<>();
+
 	    for (RailwayTrack track : tracks) {
 	        long centerNodeId = track.getNodes().get(track.getNodes().size() / 2);
 	        WayNode centerNode = longToWayNode(centerNodeId);
 	        trackCenterCoordinates.put((long) track.getId(), centerNode);
+
+	        String bucketKey = getBucketKey(centerNode.getLatitude(), centerNode.getLongitude(), BUCKET_SIZE);
+	        trackBuckets.computeIfAbsent(bucketKey, k -> new ArrayList<>()).add(track);
 	    }
 
-	    List<Station> retainedStations = new ArrayList<>();
-	    
+	    List<Station> retainedStations = Collections.synchronizedList(new ArrayList<>());
 	    int chunkSize = Math.max(1, stations.size() / numberOfThreads);
+	    List<Future<?>> futures = new ArrayList<>();
+
 	    for (int t = 0; t < numberOfThreads; t++) {
 	        final int start = t * chunkSize;
 	        final int end = (t == numberOfThreads - 1) ? stations.size() : (start + chunkSize);
@@ -350,37 +443,32 @@ public class SpeedCalculator {
 
 	            for (int i = start; i < end; i++) {
 	                Station station = stations.get(i);
-	                boolean stationHasTracks = false;
-	                double minLatitudeDiff = Double.MAX_VALUE;
-	                double minLongitudeDiff = Double.MAX_VALUE;
+	                progressMsg = "Finding tracks for station: " + station.getName();
+	                String bucketKey = getBucketKey(station.getLat(), station.getLon(), BUCKET_SIZE);
+
+	                List<RailwayTrack> nearbyTracks = getNearbyTracks(bucketKey, trackBuckets, BUCKET_SIZE);
+
+	                double minDistance = Double.MAX_VALUE;
 	                RailwayTrack closestTrack = null;
 
-	                for (RailwayTrack track : tracks) {
+	                for (RailwayTrack track : nearbyTracks) {
 	                    WayNode wn = trackCenterCoordinates.get((long) track.getId());
 
-	                    double latitudeDiff = Math.abs(station.getLat() - wn.getLatitude());
-	                    double longitudeDiff = Math.abs(station.getLon() - wn.getLongitude());
+	                    double distance = getDistance(station.getLat(), station.getLon(), wn.getLatitude(), wn.getLongitude());
 
-	                    if (latitudeDiff < minLatitudeDiff && longitudeDiff < minLongitudeDiff) {
-	                        minLatitudeDiff = latitudeDiff;
-	                        minLongitudeDiff = longitudeDiff;
+	                    if (distance < minDistance) {
+	                        minDistance = distance;
 	                        closestTrack = track;
 	                    }
 	                }
 
 	                if (closestTrack != null) {
 	                    station.addTrack(closestTrack.getId());
-	                    stationHasTracks = true;
-	                }
-
-	                if (stationHasTracks) {
 	                    retainedStationsChunk.add(station);
 	                }
 	            }
 
-	            synchronized (retainedStations) {
-	                retainedStations.addAll(retainedStationsChunk);
-	            }
+	            retainedStations.addAll(retainedStationsChunk);
 	        }));
 	    }
 
@@ -397,12 +485,41 @@ public class SpeedCalculator {
 	    stations.clear();
 	    stations.addAll(retainedStations);
 	}
+
+	private String getBucketKey(double lat, double lon, int bucketSize) {
+	    int latBucket = (int) (lat * bucketSize);
+	    int lonBucket = (int) (lon * bucketSize);
+	    return latBucket + ":" + lonBucket;
+	}
+
+	private List<RailwayTrack> getNearbyTracks(String bucketKey, Map<String, List<RailwayTrack>> trackBuckets, int bucketSize) {
+	    List<RailwayTrack> nearbyTracks = new ArrayList<>();
+	    String[] parts = bucketKey.split(":");
+	    int latBucket = Integer.parseInt(parts[0]);
+	    int lonBucket = Integer.parseInt(parts[1]);
+
+	    for (int dLat = -1; dLat <= 1; dLat++) {
+	        for (int dLon = -1; dLon <= 1; dLon++) {
+	            String nearbyKey = (latBucket + dLat) + ":" + (lonBucket + dLon);
+	            nearbyTracks.addAll(trackBuckets.getOrDefault(nearbyKey, List.of()));
+	        }
+	    }
+
+	    return nearbyTracks;
+	}
+
+	private double getDistance(double lat1, double lon1, double lat2, double lon2) {
+	    double dLat = lat1 - lat2;
+	    double dLon = lon1 - lon2;
+	    return Math.sqrt(dLat * dLat + dLon * dLon);
+	}
 	
 	public void writeTrackData() {
 		try (DataOutputStream dos = new DataOutputStream(new BufferedOutputStream(new FileOutputStream("res/trackData.bin")))) {
 	        dos.writeInt(tracks.size());
 
 	        for (RailwayTrack rt : tracks) {
+	        	progressMsg = "Saving track: " + rt.getRailwayIds().get(0);
 	            dos.writeInt(rt.getId());
 	            dos.writeInt(rt.getSpeed());
 	            dos.writeDouble(rt.getLength());
@@ -436,6 +553,7 @@ public class SpeedCalculator {
 	        dos.writeInt(stations.size());
 
 	        for (Station station : stations) {
+	        	progressMsg = "Saving station: " + station.getName();
 	        	dos.writeUTF(station.getName());
 
 	            dos.writeDouble(station.getLat());
@@ -460,6 +578,7 @@ public class SpeedCalculator {
 	            dos.writeLong(entry.getKey());
 
 	            WayNode node = entry.getValue();
+	            progressMsg = "Saving node: " + node.getNodeId();
 	            dos.writeLong(node.getNodeId());
 	            dos.writeDouble(node.getLatitude());
 	            dos.writeDouble(node.getLongitude());
@@ -599,11 +718,15 @@ public class SpeedCalculator {
         if (stops != null) {
             fullPath.addAll(d.findPath(start, stops.get(0)));
 
-            for (int i = 0; i < stops.size() - 1; i++) {
-                fullPath.addAll(d.findPath(stops.get(i), stops.get(i + 1)));
+            if(stops.size() > 1) {
+            	for (int i = 0; i < stops.size() - 1; i++) {
+            		List<Integer> path = d.findPath(stops.get(i), stops.get(i + 1));
+            		fullPath.addAll(path.subList(1, path.size()));
+                }
             }
 
-            fullPath.addAll(d.findPath(stops.get(stops.size() - 1), end));
+            List<Integer> path = d.findPath(stops.get(stops.size() - 1), end);
+            fullPath.addAll(path.subList(1, path.size()));
         } else {
             fullPath.addAll(d.findPath(start, end));
         }
@@ -651,7 +774,7 @@ public class SpeedCalculator {
         System.out.println("Total length of the path: " + roundedTotalLength + " km");
         System.out.println("Average Speed: " + averageSpeed + " km/h");
         System.out.println("Total time: " + totalTime + " minutes");
-        System.out.println("Realistic time: " + (totalTime * 1.535) + " minutes");
+        System.out.println("Realistic time: " + (int) (totalTime * 1.535) + " minutes");
 	}
 
 	public void writeToFile(String filePath, String content) {
@@ -692,16 +815,7 @@ public class SpeedCalculator {
 		}
 	}
 
-	public int getMaxSpeed(Element wayElement) {
-		String maxSpeed = "";
-		NodeList tagList = wayElement.getElementsByTagName("tag");
-		for (int i = 0; i < tagList.getLength(); i++) {
-			Element tagElement = (Element) tagList.item(i);
-			String key = tagElement.getAttribute("k");
-			if ("maxspeed".equals(key)) {
-				maxSpeed = tagElement.getAttribute("v");
-			}
-		}
+	public int getMaxSpeed(String maxSpeed) {
 		if (maxSpeed == "")
 			return 100;
 
@@ -716,7 +830,7 @@ public class SpeedCalculator {
 			}
 			if (result.toString() == "")
 				return 60;
-			if(result.toString() == "0")
+			if(Integer.parseInt(result.toString()) == 0)
 				return 60;
 			return (int) (Integer.parseInt(result.toString()) * 1.60934);
 		} else {
@@ -729,7 +843,7 @@ public class SpeedCalculator {
 			}
 			if (result.toString() == "")
 				return 100;
-			if(result.toString() == "0")
+			if(Integer.parseInt(result.toString()) == 0)
 				return 100;
 			return Integer.parseInt(result.toString());
 		}
@@ -788,6 +902,7 @@ public class SpeedCalculator {
 	            List<RailwayTrack> localSegmentedTracks = new ArrayList<>();
 	            for (int j = start; j < end; j++) {
 	                RailwayTrack track = tracks.get(j);
+	                progressMsg = "Segmenting track: " + track.getRailwayIds().get(0);
 	                List<Long> segmentNodes = new ArrayList<>();
 
 	                for (Long l : track.getNodes()) {

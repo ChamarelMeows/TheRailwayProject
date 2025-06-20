@@ -1,12 +1,10 @@
 package net.therailwayproject.stella;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-public class RailwayTrack implements Serializable {
+public class RailwayTrack {
 
-	private static final long serialVersionUID = 1L;
 	List<Long> nodes;
 	List<Integer> connections;
 	int id;
@@ -23,6 +21,10 @@ public class RailwayTrack implements Serializable {
 	
 	public void addNode(Long node) {
 		nodes.add(node);
+	}
+	
+	public void addNodes(ArrayList<Long> nodeList) {
+		nodes.addAll(nodeList);
 	}
 	
 	public void addConnection(int id) {
